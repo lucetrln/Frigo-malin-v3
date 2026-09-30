@@ -54,8 +54,10 @@ export default function AccountBar({ session, syncStatus }) {
 
     return (
       <div className="fm-account-bar">
-        <span className="fm-account-user">👤 {session.user.email}</span>
         {statusLabel && <span className={`fm-account-status ${syncStatus}`}>{statusLabel}</span>}
+        <span className="fm-account-avatar" title={`Connecté : ${session.user.email}`}>
+          {session.user.email?.[0]?.toUpperCase() || "?"}
+        </span>
         <button type="button" className="fm-account-link" onClick={() => supabase.auth.signOut()}>
           Se déconnecter
         </button>

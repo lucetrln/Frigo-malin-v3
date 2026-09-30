@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { MASSIVE_RECIPES } from "./recipesData";
 import { supabase, loadUserData, saveUserData } from "./supabase";
 import AccountBar from "./AccountBar";
+import RecipeEditor from "./RecipeEditor";
 
 const ALL_RECIPES_BY_ID = new Map(MASSIVE_RECIPES.map((r) => [r.id, r]));
 
@@ -266,6 +267,8 @@ export default function FridgeApp() {
   const [fishMeals, setFishMeals] = useState(null);
   const [favorites, setFavorites] = useState(new Set()); // recettes gardées
   const [history, setHistory] = useState([]); // semaines passées : [{ date, ids }]
+  const [customRecipes, setCustomRecipes] = useState([]); // recettes créées par l'utilisateur
+  const [editingRecipe, setEditingRecipe] = useState(null); // null, "new" ou la recette modifiée
   const [equipments, setEquipments] = useState(DEFAULT_EQUIPMENTS);
   const [activeTab, setActiveTab] = useState("frigo");
   const [expandedId, setExpandedId] = useState(null);
@@ -288,6 +291,7 @@ export default function FridgeApp() {
     if (p.fishMeals !== undefined) setFishMeals(p.fishMeals);
     if (p.favorites) setFavorites(new Set(p.favorites));
     if (p.history) setHistory(p.history);
+    if (p.customRecipes) setCustomRecipes(p.customRecipes);
     if (p.equipments) setEquipments(p.equipments);
   };
 
@@ -337,10 +341,10 @@ export default function FridgeApp() {
     persist
       .set(
         MASTER_PREFS_KEY,
-        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history })
+        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes })
       )
       .catch(() => {});
-  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, isReady]);
+  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, isReady]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -388,14 +392,14 @@ export default function FridgeApp() {
     const timer = setTimeout(() => {
       saveUserData(userId, {
         fridge,
-        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history },
+        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes },
         selected: [...selected],
       })
         .then(() => setSyncStatus("saved"))
         .catch(() => setSyncStatus("error"));
     }, 800);
     return () => clearTimeout(timer);
-  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history]);
+  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes]);
 
   const handleAddCustom = (e) => {
     e?.preventDefault();
@@ -456,7 +460,7 @@ export default function FridgeApp() {
     let excluded = 0;
     const ratio = servings / 4;
 
-    const eligible = MASSIVE_RECIPES.filter((r) => {
+    const eligible = [...customRecipes, ...MASSIVE_RECIPES].filter((r) => {
       if (!r.equipments || r.equipments.length === 0) return true;
       if (r.equipments.includes("mixeur") && !equipments.mixeur) {
         excluded++;
@@ -542,7 +546,7 @@ export default function FridgeApp() {
       );
 
     return { recipesWithStatus: statusList, excludedCount: excluded };
-  }, [fridge, store.multiplier, equipments, servings]);
+  }, [fridge, store.multiplier, equipments, servings, customRecipes]);
 
   const filteredRecipes = useMemo(() => {
     if (!searchQuery.trim()) return recipesWithStatus;
@@ -708,7 +712,10 @@ export default function FridgeApp() {
   }, [recipesWithStatus, fridge, mealsWanted, meatTarget, fishTarget, store.multiplier]);
 
   const statusById = useMemo(() => new Map(recipesWithStatus.map((r) => [r.id, r])), [recipesWithStatus]);
-  const recipeName = (id) => statusById.get(id)?.name || ALL_RECIPES_BY_ID.get(id)?.name || id;
+  const recipeName = (id) => statusById.get(id)?.name ||
+    customRecipes.find((r) => r.id === id)?.name ||
+    ALL_RECIPES_BY_ID.get(id)?.name ||
+    id;
   const suggestedRecipes = suggestedIds.map((id) => statusById.get(id));
 
   // ---------- Favoris et historique des semaines ----------
@@ -729,6 +736,21 @@ export default function FridgeApp() {
 
   const addToMenu = (ids) => {
     setSelected((prev) => new Set([...prev, ...ids]));
+  };
+
+  // ---------- Recettes personnelles ----------
+  const saveCustomRecipe = (recipe) => {
+    setCustomRecipes((prev) =>
+      prev.some((r) => r.id === recipe.id) ? prev.map((r) => (r.id === recipe.id ? recipe : r)) : [recipe, ...prev]
+    );
+    setEditingRecipe(null);
+  };
+
+  const deleteCustomRecipe = (id) => {
+    if (!window.confirm("Supprimer définitivement cette recette ?")) return;
+    setCustomRecipes((prev) => prev.filter((r) => r.id !== id));
+    setSelected((prev) => new Set([...prev].filter((x) => x !== id)));
+    setFavorites((prev) => new Set([...prev].filter((x) => x !== id)));
   };
 
   const removeWeek = (index) => {
@@ -774,6 +796,7 @@ export default function FridgeApp() {
             </button>
           </div>
           <div className="fm-box-meta">
+            {r.custom && <span className="fm-custom-tag">✍️ Ma recette</span>}
             <span>⏱ {r.time}</span>
             <span>{DIET_LABELS[r.diet]}</span>
             {r.priorityKeys.length > 0 && (
@@ -985,7 +1008,20 @@ export default function FridgeApp() {
           white-space: nowrap;
         }
 
-        .fm-account-user { font-weight: 700; color: var(--ink-dark); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+        .fm-account-avatar {
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          background: var(--citrus-orange-light);
+          color: var(--citrus-orange);
+          font-weight: 800;
+          font-size: 0.85rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: default;
+          flex-shrink: 0;
+        }
         .fm-account-status { font-weight: 700; font-size: 0.8rem; }
         .fm-account-status.saved { color: var(--fresh-green); }
         .fm-account-status.error { color: var(--coral-red); }
@@ -1371,6 +1407,33 @@ export default function FridgeApp() {
         }
 
         .fm-priority-tag { color: var(--citrus-orange); font-weight: 800; }
+
+        .fm-custom-tag {
+          background: #eef0fb;
+          color: #4a53b5;
+          font-weight: 700;
+          padding: 0.05rem 0.4rem;
+          border-radius: 4px;
+          font-size: 0.72rem;
+        }
+
+        /* ÉDITEUR DE RECETTE */
+        .fm-editor {
+          border: 1px solid var(--line-color);
+          border-radius: 10px;
+          padding: 1rem;
+          background: #fbfaf8;
+          display: flex;
+          flex-direction: column;
+          gap: 0.9rem;
+        }
+        .fm-editor .fm-field { display: block; margin: 0; }
+        .fm-editor-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 0.75rem; }
+        .fm-editor-ings { display: flex; flex-direction: column; gap: 0.4rem; }
+        .fm-editor-ings .fm-form-row { align-items: center; }
+        .fm-editor-unit { font-size: 0.8rem; color: var(--ink-soft); width: 3.5rem; flex-shrink: 0; }
+        .fm-editor textarea { resize: vertical; font-family: inherit; }
+        @media (max-width: 640px) { .fm-editor-grid { grid-template-columns: 1fr; } }
 
         .fm-qty-btn {
           background: var(--pure-white);
@@ -1890,6 +1953,69 @@ export default function FridgeApp() {
         {/* ================= ONGLET 4 : MES RECETTES (FAVORIS + HISTORIQUE) ================= */}
         {activeTab === "bibliotheque" && (
           <>
+            <section className="fm-card-panel">
+              <div className="fm-panel-head">
+                <h2>✍️ Mes créations ({customRecipes.length})</h2>
+                {!editingRecipe && (
+                  <button type="button" className="fm-submit-btn small" onClick={() => setEditingRecipe("new")}>
+                    + Nouvelle recette
+                  </button>
+                )}
+              </div>
+              <p className="fm-subhint">
+                Ajoute tes propres recettes : elles apparaissent dans « Recettes », dans les suggestions et dans ta liste de courses.
+              </p>
+
+              {editingRecipe && (
+                <RecipeEditor
+                  key={editingRecipe === "new" ? "new" : editingRecipe.id}
+                  catalog={GROCERY_CATALOG}
+                  equipmentsList={AVAILABLE_EQUIPMENTS}
+                  initial={editingRecipe === "new" ? null : editingRecipe}
+                  onSave={saveCustomRecipe}
+                  onCancel={() => setEditingRecipe(null)}
+                />
+              )}
+
+              {customRecipes.length === 0 && !editingRecipe ? (
+                <div className="fm-empty">Tu n'as pas encore créé de recette.</div>
+              ) : (
+                <ul className="fm-history-recipes" style={{ marginTop: editingRecipe ? "1rem" : 0 }}>
+                  {customRecipes.map((r) => {
+                    const available = statusById.has(r.id);
+                    const inMenu = selected.has(r.id);
+                    return (
+                      <li key={r.id}>
+                        <span style={{ flex: 1 }}>
+                          {r.name} <span className="fm-subhint" style={{ margin: 0 }}>· {r.time}</span>
+                        </span>
+                        {!available ? (
+                          <span className="fm-subhint" style={{ margin: 0 }}>indisponible avec tes appareils</span>
+                        ) : inMenu ? (
+                          <span style={{ color: "var(--fresh-green)", fontWeight: 800 }}>✓ Dans le menu</span>
+                        ) : (
+                          <button type="button" className="fm-account-link" onClick={() => addToMenu([r.id])}>
+                            + Ajouter au menu
+                          </button>
+                        )}
+                        <button type="button" className="fm-account-link" onClick={() => setEditingRecipe(r)}>
+                          Modifier
+                        </button>
+                        <button
+                          type="button"
+                          className="fm-account-link"
+                          style={{ color: "var(--coral-red)" }}
+                          onClick={() => deleteCustomRecipe(r.id)}
+                        >
+                          Supprimer
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+
             <section className="fm-card-panel">
               <h2>♥ Mes recettes gardées ({favorites.size})</h2>
               <p className="fm-subhint">
