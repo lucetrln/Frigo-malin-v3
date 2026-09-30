@@ -1657,7 +1657,8 @@ export default function FridgeApp() {
       </header>
 
       <main className="fm-container">
-        {/* CHIFFRES CLÉS DE LA SEMAINE */}
+        {/* CHIFFRES CLÉS DE LA SEMAINE (seulement dans le planning) */}
+        {activeTab === "planning" && (
         <div className="fm-stats">
           <div className="fm-stat">
             <div className="fm-stat-label">Plats choisis</div>
@@ -1682,6 +1683,7 @@ export default function FridgeApp() {
             </div>
           </div>
         </div>
+        )}
 
         {/* ================= ONGLET 1 : MON RÉFRIGÉRATEUR ================= */}
         {activeTab === "frigo" && (
