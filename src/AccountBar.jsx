@@ -48,8 +48,8 @@ export default function AccountBar({ session, syncStatus }) {
     const statusLabel = {
       loading: "Chargement…",
       saving: "Enregistrement…",
-      saved: "✓ Frigo enregistré dans ton compte",
-      error: "⚠ Erreur de synchronisation",
+      saved: "✓ Enregistré",
+      error: "⚠ Erreur d'enregistrement",
     }[syncStatus];
 
     return (
@@ -67,7 +67,9 @@ export default function AccountBar({ session, syncStatus }) {
     <div className="fm-account-bar">
       {!open ? (
         <>
-          <span className="fm-account-hint">Mode invité : ton frigo n'est enregistré que sur cet appareil.</span>
+          <span className="fm-account-hint" title="Sans compte, ton frigo n'est enregistré que sur cet appareil.">
+            Mode invité
+          </span>
           <button type="button" className="fm-account-btn" onClick={() => { setOpen(true); setMode("signup"); }}>
             Créer un compte
           </button>

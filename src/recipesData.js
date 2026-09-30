@@ -8,6 +8,7 @@ import { PATES_RIZ } from "./recettes/pates-riz.js";
 import { VIANDES } from "./recettes/viandes.js";
 import { LEGUMES_SOUPES } from "./recettes/legumes-soupes.js";
 import { OEUFS_TARTES_RAPIDES } from "./recettes/oeufs-tartes-rapides.js";
+import { LEGUMES_VARIES } from "./recettes/legumes-varies.js";
 
 const EQUIPMENT_CODES = { P: "plaques", F: "four", A: "airfryer", M: "microondes", X: "mixeur" };
 
@@ -24,4 +25,4 @@ const build = ([id, name, time, equip, ings, steps]) => ({
   steps,
 });
 
-export const MASSIVE_RECIPES = [...PATES_RIZ, ...VIANDES, ...LEGUMES_SOUPES, ...OEUFS_TARTES_RAPIDES].map(build);
+export const MASSIVE_RECIPES = [...PATES_RIZ, ...VIANDES, ...LEGUMES_SOUPES, ...OEUFS_TARTES_RAPIDES, ...LEGUMES_VARIES].map(build);

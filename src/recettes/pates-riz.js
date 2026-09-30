@@ -144,12 +144,6 @@ export const PATES_RIZ = [
     "Préparer une vinaigrette avec la moutarde, le vinaigre et l'huile.",
     "Mélanger le riz, le thon, les tomates, les œufs et la vinaigrette.",
   ]],
-  ["riz-au-lait", "Riz au lait", "40 min", "P", "riz:150 lait:1000 beurre:10", [
-    "Porter le lait à frémissement avec 80 g de sucre et une pincée de vanille si tu en as.",
-    "Ajouter le riz rond et cuire 35 minutes à feu très doux en remuant souvent.",
-    "Ajouter le beurre en fin de cuisson.",
-    "Servir tiède ou froid.",
-  ]],
   ["couscous-legumes", "Couscous aux légumes", "45 min", "P", "semoule:300 carotte:300 courgette:400 pois-chiches:250 oignon:1 tomates-concassees:400 curry:8 bouillon:1 huile:20", [
     "Faire revenir l'oignon dans l'huile avec les épices (ras el hanout ou cumin).",
     "Ajouter les carottes, les tomates, le bouillon et 1 litre d'eau, cuire 15 minutes.",

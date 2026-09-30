@@ -3,6 +3,8 @@ import { MASSIVE_RECIPES } from "./recipesData";
 import { supabase, loadUserData, saveUserData } from "./supabase";
 import AccountBar from "./AccountBar";
 
+const ALL_RECIPES_BY_ID = new Map(MASSIVE_RECIPES.map((r) => [r.id, r]));
+
 // ---------- Moteur de normalisation ----------
 const cleanStr = (s = "") =>
   s
@@ -80,7 +82,16 @@ const DEFAULT_EQUIPMENTS = {
 
 // Catégorie de chaque plat : viande (prioritaire), poisson ou végétarien
 const MEAT_KEYS = new Set(["poulet", "viande-hachee", "saucisses", "jambon", "lardons"]);
-const FISH_KEYS = new Set(["thon"]);
+const FISH_KEYS = new Set(["thon", "saumon", "cabillaud"]);
+// Base principale d'un plat, utilisée pour varier les menus
+const STARCH_BASES = ["pates", "riz", "semoule", "boulgour", "quinoa", "pdt", "patate-douce"];
+// Légumes et légumineuses : la sélection automatique veut au moins l'un d'eux dans chaque plat
+const VEG_KEYS = new Set([
+  "carotte", "chou", "poireau", "tomate", "tomates-concassees", "champignons", "courgette", "poivron",
+  "aubergine", "brocoli", "chou-fleur", "epinards", "haricots-verts", "petits-pois", "patate-douce",
+  "courge", "concombre", "salade", "lentilles", "lentilles-corail", "pois-chiches", "haricots-rouges",
+  "haricots-blancs",
+]);
 const DIET_LABELS = { meat: "🥩 Viande", fish: "🐟 Poisson", veggie: "🥦 Végétarien" };
 
 // ---------- Enseignes ----------
@@ -135,17 +146,43 @@ const ALIASES = {
   "lait-coco": ["laitdecoco", "cremedecoco", "coco"],
   "sauce-soja": ["saucesoja", "soja"],
   vinaigre: ["vinaigre", "vinaigredevin", "moutarde"],
+  brocoli: ["brocoli", "brocolis"],
+  "chou-fleur": ["choufleur", "chouxfleurs"],
+  epinards: ["epinard", "epinards", "pousseepinard", "poussesdepinards"],
+  "haricots-verts": ["haricotvert", "haricotsverts"],
+  "petits-pois": ["petitpois", "petitspois"],
+  "patate-douce": ["patatedouce", "patatesdouces"],
+  courge: ["courge", "courges", "butternut", "potimarron", "potiron", "citrouille"],
+  concombre: ["concombre", "concombres"],
+  salade: ["salade", "laitue", "batavia", "roquette", "mache", "saladeverte"],
+  citron: ["citron", "citrons", "jusdecitron"],
+  saumon: ["saumon", "pavedesaumon", "pavesdesaumon"],
+  cabillaud: ["cabillaud", "colin", "merlu", "lieu", "poissonblanc", "filetdepoisson"],
+  quinoa: ["quinoa"],
+  boulgour: ["boulgour", "boulghour"],
+  feta: ["feta"],
+  chevre: ["chevre", "buchedechevre", "fromagedechevre"],
+  "pate-feuilletee": ["patefeuilletee", "patebrisee", "pateatarte", "rouleaudepate"],
+  tofu: ["tofu"],
+  yaourt: ["yaourt", "yaourts", "yogourt", "fromageblanc", "yaourtgrec"],
 };
 
 function resolveKey(input = "") {
   const cleanInput = cleanStr(input);
   if (!cleanInput) return null;
+  // Correspondance exacte d'abord, sinon l'alias le plus long (« patate douce » ne doit pas devenir « patate »)
+  let bestKey = null;
+  let bestLen = 0;
   for (const [key, aliases] of Object.entries(ALIASES)) {
-    if (aliases.some((a) => cleanInput === a || cleanInput.includes(a) || a.includes(cleanInput))) {
-      return key;
+    for (const a of aliases) {
+      if (cleanInput === a) return key;
+      if ((cleanInput.includes(a) || a.includes(cleanInput)) && a.length > bestLen) {
+        bestKey = key;
+        bestLen = a.length;
+      }
     }
   }
-  return cleanInput;
+  return bestKey ?? cleanInput;
 }
 
 // ---------- Catalogue magasin ----------
@@ -191,6 +228,25 @@ const GROCERY_CATALOG = {
   "lait-coco": { name: "Lait de coco", unit: "ml", packQty: 400, packLabel: "Boîte 400 ml", basePrice: 1.35, step: 50 },
   "sauce-soja": { name: "Sauce soja", unit: "ml", packQty: 150, packLabel: "Bouteille 150 ml", basePrice: 1.65, step: 20 },
   vinaigre: { name: "Vinaigre / Moutarde", unit: "ml", packQty: 500, packLabel: "1 unité", basePrice: 1.10, step: 25 },
+  brocoli: { name: "Brocoli", unit: "pce", packQty: 1, packLabel: "1 tête", basePrice: 1.49, step: 1 },
+  "chou-fleur": { name: "Chou-fleur", unit: "pce", packQty: 1, packLabel: "1 pièce", basePrice: 1.99, step: 1 },
+  epinards: { name: "Épinards (surgelés)", unit: "g", packQty: 1000, packLabel: "Sachet 1 kg", basePrice: 1.89, step: 100 },
+  "haricots-verts": { name: "Haricots verts (surgelés)", unit: "g", packQty: 1000, packLabel: "Sachet 1 kg", basePrice: 1.99, step: 100 },
+  "petits-pois": { name: "Petits pois (surgelés)", unit: "g", packQty: 1000, packLabel: "Sachet 1 kg", basePrice: 1.79, step: 100 },
+  "patate-douce": { name: "Patates douces", unit: "g", packQty: 1000, packLabel: "Sachet 1 kg", basePrice: 2.49, step: 100 },
+  courge: { name: "Courge butternut", unit: "g", packQty: 1500, packLabel: "1 courge (~1,5 kg)", basePrice: 2.29, step: 250 },
+  concombre: { name: "Concombre", unit: "pce", packQty: 1, packLabel: "1 pièce", basePrice: 0.89, step: 1 },
+  salade: { name: "Salade verte", unit: "pce", packQty: 1, packLabel: "1 laitue", basePrice: 0.99, step: 1 },
+  citron: { name: "Citrons", unit: "pce", packQty: 3, packLabel: "Filet de 3", basePrice: 1.29, step: 1 },
+  saumon: { name: "Pavés de saumon", unit: "g", packQty: 250, packLabel: "2 pavés (250 g)", basePrice: 4.99, step: 125 },
+  cabillaud: { name: "Filets de poisson blanc (surgelés)", unit: "g", packQty: 400, packLabel: "Sachet 400 g", basePrice: 4.49, step: 100 },
+  quinoa: { name: "Quinoa", unit: "g", packQty: 500, packLabel: "Paquet 500 g", basePrice: 2.49, step: 50 },
+  boulgour: { name: "Boulgour", unit: "g", packQty: 500, packLabel: "Paquet 500 g", basePrice: 1.39, step: 50 },
+  feta: { name: "Feta", unit: "g", packQty: 200, packLabel: "Bloc 200 g", basePrice: 1.79, step: 50 },
+  chevre: { name: "Bûche de chèvre", unit: "g", packQty: 180, packLabel: "Bûche 180 g", basePrice: 1.99, step: 30 },
+  "pate-feuilletee": { name: "Pâte feuilletée", unit: "pce", packQty: 1, packLabel: "1 rouleau", basePrice: 0.99, step: 1 },
+  tofu: { name: "Tofu nature", unit: "g", packQty: 400, packLabel: "2 blocs de 200 g", basePrice: 2.49, step: 100 },
+  yaourt: { name: "Yaourts nature", unit: "pce", packQty: 4, packLabel: "Pack de 4", basePrice: 1.20, step: 1 },
 };
 
 export default function FridgeApp() {
@@ -208,6 +264,8 @@ export default function FridgeApp() {
   const [mealsWanted, setMealsWanted] = useState(7);
   const [meatMeals, setMeatMeals] = useState(null); // null = peu importe
   const [fishMeals, setFishMeals] = useState(null);
+  const [favorites, setFavorites] = useState(new Set()); // recettes gardées
+  const [history, setHistory] = useState([]); // semaines passées : [{ date, ids }]
   const [equipments, setEquipments] = useState(DEFAULT_EQUIPMENTS);
   const [activeTab, setActiveTab] = useState("frigo");
   const [expandedId, setExpandedId] = useState(null);
@@ -228,6 +286,8 @@ export default function FridgeApp() {
     if (p.mealsWanted) setMealsWanted(p.mealsWanted);
     if (p.meatMeals !== undefined) setMeatMeals(p.meatMeals);
     if (p.fishMeals !== undefined) setFishMeals(p.fishMeals);
+    if (p.favorites) setFavorites(new Set(p.favorites));
+    if (p.history) setHistory(p.history);
     if (p.equipments) setEquipments(p.equipments);
   };
 
@@ -277,10 +337,10 @@ export default function FridgeApp() {
     persist
       .set(
         MASTER_PREFS_KEY,
-        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments })
+        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history })
       )
       .catch(() => {});
-  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, isReady]);
+  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, isReady]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -328,14 +388,14 @@ export default function FridgeApp() {
     const timer = setTimeout(() => {
       saveUserData(userId, {
         fridge,
-        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments },
+        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history },
         selected: [...selected],
       })
         .then(() => setSyncStatus("saved"))
         .catch(() => setSyncStatus("error"));
     }, 800);
     return () => clearTimeout(timer);
-  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments]);
+  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history]);
 
   const handleAddCustom = (e) => {
     e?.preventDefault();
@@ -352,6 +412,7 @@ export default function FridgeApp() {
     setFridge((prev) => ({
       ...prev,
       [matchedKey]: {
+        ...prev[matchedKey],
         name: resolvedName,
         qty: (prev[matchedKey]?.qty || 0) + qtyNum,
         unit: resolvedUnit,
@@ -375,6 +436,11 @@ export default function FridgeApp() {
       }
       return { ...prev, [key]: { ...cur, qty: nextQty } };
     });
+  };
+
+  // Aliment « à utiliser en priorité » : les recettes qui l'utilisent passent devant
+  const togglePriority = (key) => {
+    setFridge((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], priority: !prev[key].priority } } : prev));
   };
 
   const removeStock = (key) => {
@@ -457,6 +523,9 @@ export default function FridgeApp() {
             : r.ingredients.some((ing) => FISH_KEYS.has(ing.key))
               ? "fish"
               : "veggie",
+          base: STARCH_BASES.find((k) => r.ingredients.some((ing) => ing.key === k)) ?? null,
+          hasVeg: r.ingredients.some((ing) => VEG_KEYS.has(ing.key)),
+          priorityKeys: r.ingredients.filter((ing) => fridge[ing.key]?.priority).map((ing) => ing.key),
           scaledIngredients,
           completedCount,
           missingCount,
@@ -465,7 +534,12 @@ export default function FridgeApp() {
           standAloneCost,
         };
       })
-      .sort((a, b) => b.matchPct - a.matchPct || a.standAloneCost - b.standAloneCost);
+      .sort(
+        (a, b) =>
+          b.priorityKeys.length - a.priorityKeys.length ||
+          b.matchPct - a.matchPct ||
+          a.standAloneCost - b.standAloneCost
+      );
 
     return { recipesWithStatus: statusList, excludedCount: excluded };
   }, [fridge, store.multiplier, equipments, servings]);
@@ -536,8 +610,8 @@ export default function FridgeApp() {
   const selectedMeatCount = selectedRecipes.filter((r) => r.diet === "meat").length;
   const selectedFishCount = selectedRecipes.filter((r) => r.diet === "fish").length;
 
-  // OPTIMISATION CORRIGÉE : SÉLECTIONNE TOUJOURS LE NOMBRE EXACT DE REPAS DEMANDÉS (SANS STOP ARTIFICIEL)
-  const optimizeMenu = () => {
+  // SUGGESTIONS : calcule les meilleurs plats pour la semaine (sans les ajouter au menu, c'est l'utilisateur qui choisit)
+  const suggestedIds = useMemo(() => {
     const pool = [...recipesWithStatus];
     const picked = [];
     const simulatedStock = {};
@@ -552,29 +626,44 @@ export default function FridgeApp() {
     const fitsQuota = (r) => quota[bucket(r)] > 0;
     const consumeQuota = (r) => quota[bucket(r)]--;
 
-    // 1. D'abord les recettes réalisables gratuitement avec ce qui est déjà au frigo
-    const freeRecipes = pool.filter((r) => r.standAloneCost === 0);
-    for (const r of freeRecipes) {
-      if (picked.length >= mealsWanted) break;
-      if (!fitsQuota(r)) continue;
+    // Aliments du frigo marqués ★ : tant qu'il en reste, les recettes qui les utilisent passent devant
+    const priorityLeft = {};
+    Object.entries(fridge).forEach(([k, item]) => {
+      if (item.priority) priorityLeft[k] = item.qty;
+    });
+    const usesPriority = (r) => r.scaledIngredients.filter((ing) => priorityLeft[ing.key] > 0).length;
+
+    // Variété : pas plus de ~1 repas sur 4 avec la même base (pâtes, riz, pommes de terre…),
+    // sauf pour une recette qui écoule un aliment prioritaire. La limite est levée seulement
+    // s'il est impossible de compléter le menu autrement.
+    const baseCount = {};
+    let baseLimit = Math.max(1, Math.ceil(mealsWanted / 4));
+    const fitsVariety = (r) => !r.base || (baseCount[r.base] || 0) < baseLimit || usesPriority(r) > 0;
+    const canPick = (r) => fitsQuota(r) && fitsVariety(r);
+    const markPicked = (r) => {
       consumeQuota(r);
-      picked.push(r.id);
+      if (r.base) baseCount[r.base] = (baseCount[r.base] || 0) + 1;
       r.scaledIngredients.forEach((ing) => {
-        simulatedStock[ing.key] = Math.max(0, (simulatedStock[ing.key] || 0) - ing.required);
+        if (priorityLeft[ing.key] !== undefined) priorityLeft[ing.key] -= ing.required;
       });
-    }
+      picked.push(r.id);
+    };
 
-    let remaining = pool.filter((r) => !picked.includes(r.id));
+    // Score de chaque recette = ce qu'elle ajoute au ticket de caisse,
+    // avec une forte priorité aux aliments ★ et une légère préférence pour les plats avec légumes.
+    const PRIORITY_BONUS = 10;
+    const NO_VEG_PENALTY = 1.5;
 
-    // 2. Sélectionne les plats suivants en complétant toujours jusqu'au nombre voulu (ex. 7)
-    // en choisissant à chaque étape l'option la plus économique
+    let remaining = [...pool];
+
+    // Complète toujours jusqu'au nombre voulu (ex. 7) en prenant à chaque étape la meilleure recette
     while (picked.length < mealsWanted && remaining.length > 0) {
       let best = null;
       let lowestAddedCost = Infinity;
 
       for (const r of remaining) {
-        if (!fitsQuota(r)) continue;
-        let addedForThis = 0;
+        if (!canPick(r)) continue;
+        let addedForThis = (r.hasVeg ? 0 : NO_VEG_PENALTY) - PRIORITY_BONUS * usesPriority(r);
         r.scaledIngredients.forEach((ing) => {
           const cur = simulatedStock[ing.key] || 0;
           const def = ing.required - cur;
@@ -593,10 +682,13 @@ export default function FridgeApp() {
         }
       }
 
-      if (!best) break;
+      if (!best) {
+        if (baseLimit === Infinity) break;
+        baseLimit = Infinity;
+        continue;
+      }
 
-      consumeQuota(best);
-      picked.push(best.id);
+      markPicked(best);
       best.scaledIngredients.forEach((ing) => {
         const cur = simulatedStock[ing.key] || 0;
         const def = ing.required - cur;
@@ -612,7 +704,35 @@ export default function FridgeApp() {
       remaining = remaining.filter((r) => r.id !== best.id);
     }
 
-    setSelected(new Set(picked));
+    return picked;
+  }, [recipesWithStatus, fridge, mealsWanted, meatTarget, fishTarget, store.multiplier]);
+
+  const statusById = useMemo(() => new Map(recipesWithStatus.map((r) => [r.id, r])), [recipesWithStatus]);
+  const recipeName = (id) => statusById.get(id)?.name || ALL_RECIPES_BY_ID.get(id)?.name || id;
+  const suggestedRecipes = suggestedIds.map((id) => statusById.get(id));
+
+  // ---------- Favoris et historique des semaines ----------
+  const toggleFavorite = (id) => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const archiveWeek = () => {
+    if (selected.size === 0) return;
+    setHistory((prev) => [{ date: new Date().toISOString(), ids: [...selected] }, ...prev].slice(0, 30));
+    setSelected(new Set());
+  };
+
+  const addToMenu = (ids) => {
+    setSelected((prev) => new Set([...prev, ...ids]));
+  };
+
+  const removeWeek = (index) => {
+    setHistory((prev) => prev.filter((_, i) => i !== index));
   };
 
   const toggleSelect = (id) => {
@@ -622,6 +742,102 @@ export default function FridgeApp() {
       else next.add(id);
       return next;
     });
+  };
+
+  // Carte de recette (onglet des plats et favoris). `section` distingue les cartes ouvertes
+  // quand une même recette apparaît dans plusieurs listes.
+  const renderRecipeCard = (r, section, number) => {
+    const cardKey = `${section}:${r.id}`;
+    const isExpanded = expandedId === cardKey;
+    const isSelected = selected.has(r.id);
+    const isFavorite = favorites.has(r.id);
+
+    return (
+      <div className={`fm-recipe-box ${isSelected ? "selected" : ""}`} key={cardKey}>
+        <div className="fm-box-header" onClick={() => toggleAccordion(cardKey)}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
+            <div className="fm-box-title">
+              {number ? `${number}. ` : ""}
+              {r.name}
+            </div>
+            <button
+              type="button"
+              className={`fm-fav-btn ${isFavorite ? "active" : ""}`}
+              title={isFavorite ? "Retirer de mes recettes gardées" : "Garder cette recette"}
+              aria-pressed={isFavorite}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFavorite(r.id);
+              }}
+            >
+              {isFavorite ? "♥" : "♡"}
+            </button>
+          </div>
+          <div className="fm-box-meta">
+            <span>⏱ {r.time}</span>
+            <span>{DIET_LABELS[r.diet]}</span>
+            {r.priorityKeys.length > 0 && (
+              <span className="fm-priority-tag">★ {r.priorityKeys.map((k) => fridge[k]?.name || k).join(", ")}</span>
+            )}
+            {r.equipments.map((eq) => (
+              <span key={eq} className="fm-pill-device">
+                {AVAILABLE_EQUIPMENTS.find((e) => e.id === eq)?.icon} {eq}
+              </span>
+            ))}
+            <span>• {r.completedCount}/{r.totalCount} en stock</span>
+          </div>
+
+          <div className="fm-card-foot">
+            <span
+              className="fm-card-price"
+              style={{ color: r.standAloneCost === 0 ? "var(--fresh-green)" : "var(--citrus-orange)" }}
+            >
+              {r.standAloneCost === 0 ? "0 € à acheter" : `+${fmtPrice(r.standAloneCost)}`}
+            </span>
+            <button
+              type="button"
+              className={`fm-submit-btn small ${isSelected ? "outline" : "green"}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleSelect(r.id);
+              }}
+            >
+              {isSelected ? "Retirer" : "+ Ajouter"}
+            </button>
+          </div>
+          <span className="fm-card-toggle">{isExpanded ? "▲ Masquer la recette" : "▼ Voir la recette"}</span>
+        </div>
+
+        {isExpanded && (
+          <div className="fm-box-drawer">
+            <div className="fm-label-sub">Ingrédients requis ({servings} pers.) :</div>
+            <div className="fm-ings-container">
+              {r.scaledIngredients.map((ing) => (
+                <div className="fm-ing-line" key={ing.key}>
+                  <span>
+                    <strong>{ing.name}</strong> : {ing.required} {ing.unit}
+                  </span>
+                  {ing.isFull ? (
+                    <span style={{ color: "var(--fresh-green)", fontWeight: 800 }}>✓ Déjà au frigo</span>
+                  ) : (
+                    <span style={{ color: "var(--coral-red)", fontWeight: 700 }}>
+                      Manque {ing.deficit} {ing.unit} ({ing.packLabel})
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="fm-label-sub">Préparation pas-à-pas :</div>
+            <ol className="fm-recipe-ol">
+              {r.steps.map((st, sIdx) => (
+                <li key={sIdx}>{st}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const toggleAccordion = (id) => {
@@ -644,154 +860,179 @@ export default function FridgeApp() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Space+Mono:wght@700&family=Syne:wght@800&display=swap');
 
-        :root, html, body {
+        html, body {
           margin: 0;
           padding: 0;
-          width: 100%;
-          min-height: 100vh;
-          background: #faf8f5;
-          overflow-x: hidden;
+          background: #f7f5f1;
         }
 
         .fm-app-root {
-          /* PALETTE COLORÉE DOUCE ET ÉLÉGANTE */
-          --cream-bg: #faf8f5;
+          --cream-bg: #f7f5f1;
           --pure-white: #ffffff;
-          --ink-dark: #18221b;
-          --ink-soft: #4a594f;
-          
-          --citrus-orange: #ff6b35;
-          --citrus-orange-hover: #ff8554;
+          --ink-dark: #1c2520;
+          --ink-soft: #5b6860;
+          --ink-faint: #8a958e;
+
+          --citrus-orange: #f26430;
+          --citrus-orange-hover: #e0541f;
+          --citrus-orange-light: #fff0e9;
           --warm-yellow: #ffb703;
-          --sunny-yellow: #fff3cc;
-          
+          --sunny-yellow: #fff6dc;
+
           --fresh-green: #2a7a44;
           --fresh-green-light: #e8f5ec;
-          
-          --fridge-mint: #e2f1f4;
-          --fridge-border: #b8dbe0;
+
+          --fridge-mint: #eaf5f7;
+          --fridge-border: #c7e2e7;
           --fridge-accent: #007791;
-          
-          --coral-red: #e63946;
-          --line-color: rgba(24, 34, 27, 0.08);
-          
+
+          --coral-red: #d9363e;
+          --line-color: #e7e3dc;
+          --radius: 12px;
+          --shadow: 0 1px 2px rgba(28, 37, 32, 0.05);
+
           font-family: 'Plus Jakarta Sans', sans-serif;
+          font-size: 15px;
+          line-height: 1.45;
           background: var(--cream-bg);
           color: var(--ink-dark);
           min-height: 100vh;
           width: 100%;
-          box-sizing: border-box;
-          padding: 2rem 3rem 6rem;
+          overflow-x: hidden;
         }
 
         .fm-app-root * { box-sizing: border-box; }
 
-        .fm-fullwidth-wrapper {
-          width: 100%;
-          max-width: 100%;
+        /* ---------- BARRE DE NAVIGATION ---------- */
+        .fm-topbar {
+          position: sticky;
+          top: 0;
+          z-index: 50;
+          background: rgba(255, 255, 255, 0.95);
+          backdrop-filter: blur(8px);
+          border-bottom: 1px solid var(--line-color);
+        }
+
+        .fm-topbar-inner {
+          max-width: 1240px;
           margin: 0 auto;
-        }
-
-        /* HEADER CENTRÉ AVEC LE TITRE EN SYNE */
-        .fm-hero-header {
+          padding: 0 1.5rem;
+          height: 60px;
           display: flex;
-          flex-direction: column;
           align-items: center;
-          text-align: center;
-          margin-bottom: 2.2rem;
-          padding-bottom: 1.8rem;
-          border-bottom: 2px dashed rgba(255, 107, 53, 0.25);
-          gap: 0.6rem;
+          gap: 1.5rem;
         }
 
-        .fm-hero-title {
+        .fm-logo {
           font-family: 'Syne', sans-serif;
-          font-size: 3.8rem;
+          font-size: 1.3rem;
           font-weight: 800;
-          letter-spacing: -0.03em;
-          margin: 0;
           color: var(--citrus-orange);
-          display: flex;
-          align-items: center;
-          gap: 0.8rem;
-        }
-
-        .fm-hero-tagline {
-          font-size: 1.15rem;
-          color: var(--ink-soft);
+          letter-spacing: -0.02em;
+          white-space: nowrap;
           margin: 0;
-          max-width: 700px;
-          line-height: 1.5;
         }
 
-        .fm-hero-badges {
+        .fm-nav {
           display: flex;
-          align-items: center;
-          gap: 1.2rem;
-          margin-top: 0.5rem;
-          background: var(--sunny-yellow);
-          padding: 0.6rem 1.6rem;
-          border-radius: 999px;
-          border: 1px solid rgba(255, 183, 3, 0.4);
+          gap: 0.25rem;
+          flex: 1;
+          height: 100%;
+          overflow-x: auto;
+          scrollbar-width: none;
         }
+        .fm-nav::-webkit-scrollbar { display: none; }
 
-        .fm-hero-pill {
-          font-size: 0.98rem;
+        .fm-nav-link {
+          background: none;
+          border: none;
+          border-bottom: 2px solid transparent;
+          font: inherit;
           font-weight: 700;
-          color: #7a5000;
-        }
-
-        .fm-hero-pill strong {
-          color: var(--citrus-orange);
-          font-family: 'Space Mono', monospace;
-          font-size: 1.1rem;
-        }
-
-        /* COMPTE UTILISATEUR */
-        .fm-account-bar {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: center;
-          gap: 0.8rem;
-          margin-top: 0.6rem;
           font-size: 0.92rem;
           color: var(--ink-soft);
+          padding: 0 0.85rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          white-space: nowrap;
+          transition: color 0.15s ease, border-color 0.15s ease;
+        }
+        .fm-nav-link:hover { color: var(--ink-dark); }
+        .fm-nav-link.active { color: var(--citrus-orange); border-bottom-color: var(--citrus-orange); }
+
+        .fm-badge-counter {
+          background: var(--citrus-orange-light);
+          color: var(--citrus-orange);
+          font-size: 0.72rem;
+          font-weight: 800;
+          min-width: 1.3rem;
+          padding: 0.05rem 0.4rem;
+          border-radius: 999px;
+          text-align: center;
         }
 
-        .fm-account-user { font-weight: 800; color: var(--ink-dark); }
-        .fm-account-status { font-weight: 700; }
+        /* ---------- COMPTE ---------- */
+        .fm-topbar-account { position: relative; min-height: 34px; display: flex; align-items: center; }
+
+        .fm-account-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
+          font-size: 0.85rem;
+          color: var(--ink-soft);
+          white-space: nowrap;
+        }
+
+        .fm-account-user { font-weight: 700; color: var(--ink-dark); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+        .fm-account-status { font-weight: 700; font-size: 0.8rem; }
         .fm-account-status.saved { color: var(--fresh-green); }
         .fm-account-status.error { color: var(--coral-red); }
+        .fm-account-hint {
+          font-size: 0.78rem;
+          font-weight: 700;
+          background: #f1efea;
+          padding: 0.2rem 0.55rem;
+          border-radius: 999px;
+          cursor: help;
+        }
 
         .fm-account-form {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 16px);
+          width: 300px;
           display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: center;
+          flex-direction: column;
           gap: 0.6rem;
           background: var(--pure-white);
           border: 1px solid var(--line-color);
-          border-radius: 16px;
-          padding: 0.9rem 1.2rem;
+          border-radius: var(--radius);
+          padding: 1.1rem;
+          box-shadow: 0 12px 32px rgba(28, 37, 32, 0.12);
+          white-space: normal;
         }
+        .fm-account-form strong { font-size: 1rem; color: var(--ink-dark); }
 
         .fm-account-form input {
           font: inherit;
-          padding: 0.55rem 0.9rem;
+          padding: 0.55rem 0.75rem;
           border: 1px solid var(--line-color);
-          border-radius: 10px;
-          min-width: 220px;
+          border-radius: 8px;
+          width: 100%;
         }
+        .fm-account-form input:focus { outline: none; border-color: var(--citrus-orange); }
 
         .fm-account-btn {
           font: inherit;
-          font-weight: 800;
+          font-weight: 700;
+          font-size: 0.85rem;
           background: var(--citrus-orange);
           color: var(--pure-white);
           border: none;
-          border-radius: 999px;
-          padding: 0.55rem 1.3rem;
+          border-radius: 8px;
+          padding: 0.45rem 0.9rem;
           cursor: pointer;
         }
         .fm-account-btn:hover { background: var(--citrus-orange-hover); }
@@ -800,119 +1041,246 @@ export default function FridgeApp() {
         .fm-account-link {
           font: inherit;
           font-weight: 700;
+          font-size: 0.85rem;
           background: none;
           border: none;
           color: var(--fridge-accent);
-          text-decoration: underline;
           cursor: pointer;
-          padding: 0.3rem;
+          padding: 0.25rem;
         }
+        .fm-account-link:hover { text-decoration: underline; }
 
-        .fm-account-message { width: 100%; margin: 0; font-weight: 700; }
+        .fm-account-message { margin: 0; font-weight: 700; font-size: 0.82rem; white-space: normal; }
+        .fm-account-bar > .fm-account-message {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 16px);
+          width: 300px;
+          background: var(--pure-white);
+          border: 1px solid var(--line-color);
+          border-radius: var(--radius);
+          padding: 0.8rem 1rem;
+          box-shadow: 0 12px 32px rgba(28, 37, 32, 0.12);
+        }
+        .fm-account-form ~ .fm-account-message { top: auto; }
         .fm-account-message.error { color: var(--coral-red); }
         .fm-account-message.info { color: var(--fresh-green); }
 
-        /* ONGLETS */
-        .fm-tabs-bar {
-          display: flex;
-          justify-content: center;
-          gap: 1rem;
-          margin-bottom: 2.5rem;
+        /* ---------- CONTENU ---------- */
+        .fm-container {
+          max-width: 1240px;
+          margin: 0 auto;
+          padding: 1.5rem 1.5rem 4rem;
         }
 
-        .fm-tab-button {
+        .fm-page-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 1rem;
+          flex-wrap: wrap;
+          margin-bottom: 1.2rem;
+        }
+        .fm-page-head h1 { font-size: 1.45rem; font-weight: 800; margin: 0; letter-spacing: -0.01em; }
+        .fm-page-head p { margin: 0.2rem 0 0; color: var(--ink-soft); font-size: 0.9rem; }
+
+        .fm-stats {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 0.75rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .fm-stat {
           background: var(--pure-white);
           border: 1px solid var(--line-color);
-          color: var(--ink-soft);
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 1.05rem;
-          font-weight: 700;
-          padding: 0.85rem 1.8rem;
-          border-radius: 999px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-          display: flex;
-          align-items: center;
-          gap: 0.6rem;
+          border-radius: var(--radius);
+          padding: 0.7rem 1rem;
+          box-shadow: var(--shadow);
         }
+        .fm-stat-label { font-size: 0.75rem; font-weight: 700; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+        .fm-stat-value { font-size: 1.15rem; font-weight: 800; margin-top: 0.1rem; }
+        .fm-stat-value.ok { color: var(--fresh-green); }
+        .fm-stat-value.over { color: var(--coral-red); }
 
-        .fm-tab-button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 18px rgba(0,0,0,0.06);
-          color: var(--citrus-orange);
-        }
-
-        .fm-tab-button.active {
-          background: var(--citrus-orange);
-          color: var(--pure-white);
-          border-color: var(--citrus-orange);
-          box-shadow: 0 8px 20px rgba(255, 107, 53, 0.35);
-        }
-
-        .fm-badge-counter {
-          background: var(--warm-yellow);
-          color: var(--ink-dark);
-          font-size: 0.8rem;
-          font-weight: 800;
-          padding: 0.2rem 0.55rem;
-          border-radius: 999px;
-          font-family: 'Space Mono', monospace;
-        }
-
-        /* PANNEAUX AVEC TYPO MODERNE ADOUCIE */
         .fm-card-panel {
           background: var(--pure-white);
           border: 1px solid var(--line-color);
-          border-radius: 20px;
-          padding: 2.4rem;
-          margin-bottom: 2.5rem;
-          box-shadow: 0 10px 35px rgba(0, 0, 0, 0.03);
-          width: 100%;
+          border-radius: var(--radius);
+          padding: 1.25rem 1.4rem;
+          margin-bottom: 1.25rem;
+          box-shadow: var(--shadow);
+          min-width: 0;
         }
 
         .fm-card-panel h2 {
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 1.7rem;
+          font-size: 1.08rem;
           font-weight: 800;
           color: var(--ink-dark);
-          margin: 0 0 0.5rem;
-          letter-spacing: -0.01em;
+          margin: 0 0 0.3rem;
         }
 
         .fm-subhint {
-          font-size: 1rem;
+          font-size: 0.86rem;
           color: var(--ink-soft);
-          margin: 0 0 1.8rem;
+          margin: 0 0 1rem;
         }
 
-        /* FRIGO DESIGN PASTEL */
-        .fm-fridge-container {
+        .fm-panel-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.8rem;
+          margin-bottom: 0.4rem;
+        }
+        .fm-panel-head h2 { margin: 0; }
+
+        .fm-empty {
+          padding: 2rem 1rem;
+          text-align: center;
+          color: var(--ink-soft);
+          font-size: 0.9rem;
+        }
+
+        /* ---------- MISES EN PAGE ---------- */
+        .fm-layout-sidebar {
+          display: grid;
+          grid-template-columns: 280px minmax(0, 1fr);
+          gap: 1.25rem;
+          align-items: start;
+        }
+
+        .fm-sidebar { position: sticky; top: 76px; }
+
+        .fm-layout-split {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 380px;
+          gap: 1.25rem;
+          align-items: start;
+        }
+        .fm-layout-split > .fm-card-panel:last-child { position: sticky; top: 76px; }
+
+        .fm-layout-fridge {
+          display: grid;
+          grid-template-columns: 300px minmax(0, 1fr);
+          gap: 1.25rem;
+          align-items: start;
+        }
+
+        /* ---------- PRÉFÉRENCES ---------- */
+        .fm-field { margin-bottom: 1rem; }
+        .fm-field:last-child { margin-bottom: 0; }
+        .fm-field-label {
+          display: block;
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: var(--ink-soft);
+          margin-bottom: 0.35rem;
+        }
+
+        .fm-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem; }
+        .fm-field-row .fm-field { margin-bottom: 0; }
+
+        .fm-stepper {
+          display: flex;
+          align-items: center;
+          border: 1px solid var(--line-color);
+          border-radius: 8px;
+          overflow: hidden;
+          background: var(--pure-white);
+        }
+        .fm-stepper button {
+          background: #f6f4f0;
+          border: none;
+          width: 30px;
+          height: 32px;
+          font: inherit;
+          font-weight: 800;
+          color: var(--ink-dark);
+          cursor: pointer;
+        }
+        .fm-stepper button:hover { background: var(--citrus-orange-light); color: var(--citrus-orange); }
+        .fm-stepper-value { flex: 1; text-align: center; font-weight: 800; font-size: 0.9rem; }
+
+        .fm-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+        .fm-chip {
+          font: inherit;
+          font-size: 0.8rem;
+          font-weight: 700;
+          padding: 0.3rem 0.65rem;
+          border-radius: 999px;
+          border: 1px solid var(--line-color);
+          background: var(--pure-white);
+          color: var(--ink-soft);
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .fm-chip:hover { border-color: var(--fresh-green); }
+        .fm-chip.active { background: var(--fresh-green-light); border-color: var(--fresh-green); color: var(--fresh-green); }
+
+        .fm-divider { border: none; border-top: 1px solid var(--line-color); margin: 1rem 0; }
+
+        /* ---------- FORMULAIRES ET BOUTONS ---------- */
+        .fm-bright-form { display: flex; flex-direction: column; gap: 0.6rem; }
+        .fm-form-row { display: flex; gap: 0.5rem; }
+
+        .fm-form-input {
+          background: var(--pure-white);
+          color: var(--ink-dark);
+          border: 1px solid var(--line-color);
+          border-radius: 8px;
+          padding: 0.5rem 0.7rem;
+          font-family: inherit;
+          font-size: 0.88rem;
+          font-weight: 600;
           width: 100%;
-          max-width: 820px;
-          margin: 2rem auto;
+          min-width: 0;
+        }
+        .fm-form-input:focus { outline: none; border-color: var(--citrus-orange); box-shadow: 0 0 0 3px var(--citrus-orange-light); }
+
+        .fm-submit-btn {
+          background: var(--citrus-orange);
+          color: var(--pure-white);
+          border: none;
+          border-radius: 8px;
+          padding: 0.55rem 1rem;
+          font-family: inherit;
+          font-weight: 700;
+          font-size: 0.88rem;
+          cursor: pointer;
+          transition: background 0.15s ease;
+          white-space: nowrap;
+        }
+        .fm-submit-btn:hover { background: var(--citrus-orange-hover); }
+        .fm-submit-btn.small { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+        .fm-submit-btn.green { background: var(--fresh-green); }
+        .fm-submit-btn.green:hover { background: #22653a; }
+        .fm-submit-btn.outline { background: var(--pure-white); color: var(--coral-red); border: 1px solid #f1c9cb; }
+        .fm-submit-btn.outline:hover { background: #fdf0f0; }
+
+        .fm-search { max-width: 280px; }
+
+        /* ---------- FRIGO ---------- */
+        .fm-fridge-container {
           background: var(--fridge-mint);
-          border: 6px solid var(--fridge-border);
-          border-radius: 40px 40px 24px 24px;
-          padding: 2rem;
+          border: 3px solid var(--fridge-border);
+          border-radius: 22px 22px 14px 14px;
+          padding: 1rem;
           position: relative;
-          box-shadow: 0 25px 60px rgba(0, 119, 145, 0.12), inset 0 2px 6px rgba(255,255,255,0.8);
         }
 
         .fm-fridge-tophead {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding-bottom: 1.2rem;
-          border-bottom: 3px solid rgba(0, 119, 145, 0.1);
-          margin-bottom: 1.5rem;
+          margin-bottom: 0.8rem;
         }
 
         .fm-fridge-logo {
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 1.1rem;
+          font-size: 0.78rem;
           font-weight: 800;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
           color: var(--fridge-accent);
           text-transform: uppercase;
         }
@@ -920,409 +1288,389 @@ export default function FridgeApp() {
         .fm-fridge-led-panel {
           background: var(--pure-white);
           border: 1px solid var(--fridge-border);
-          border-radius: 8px;
-          padding: 0.4rem 0.9rem;
+          border-radius: 6px;
+          padding: 0.2rem 0.6rem;
           display: flex;
           align-items: center;
-          gap: 0.6rem;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+          gap: 0.45rem;
         }
-
-        .fm-led-status {
-          font-family: 'Space Mono', monospace;
-          color: var(--fresh-green);
-          font-weight: 700;
-          font-size: 0.92rem;
-        }
-
-        .fm-led-light {
-          width: 9px;
-          height: 9px;
-          background: #38b000;
-          border-radius: 50%;
-          box-shadow: 0 0 8px #38b000;
-        }
+        .fm-led-status { font-family: 'Space Mono', monospace; color: var(--fresh-green); font-weight: 700; font-size: 0.75rem; }
+        .fm-led-light { width: 7px; height: 7px; background: #38b000; border-radius: 50%; box-shadow: 0 0 6px #38b000; }
 
         .fm-fridge-shelves-zone {
           background: var(--pure-white);
-          border-radius: 20px;
-          padding: 1.8rem;
-          border: 2px solid rgba(0, 119, 145, 0.12);
-          box-shadow: inset 0 3px 12px rgba(0,0,0,0.02);
-          position: relative;
+          border-radius: 12px;
+          padding: 1rem;
+          border: 1px solid rgba(0, 119, 145, 0.12);
+          min-height: 200px;
         }
 
         .fm-vintage-handle {
           position: absolute;
-          right: -24px;
-          top: 140px;
-          width: 14px;
-          height: 160px;
+          right: -10px;
+          top: 80px;
+          width: 8px;
+          height: 90px;
           background: linear-gradient(90deg, #d3d9d5, #ffffff 45%, #adb5b0);
-          border-radius: 8px;
-          box-shadow: 3px 6px 15px rgba(0,0,0,0.15);
+          border-radius: 6px;
         }
 
-        .fm-shelf-block {
-          margin-bottom: 2rem;
-        }
-
-        .fm-shelf-block:last-child {
-          margin-bottom: 0.5rem;
-        }
+        .fm-shelf-block { margin-bottom: 1rem; }
+        .fm-shelf-block:last-child { margin-bottom: 0; }
 
         .fm-shelf-items-row {
           display: flex;
           flex-wrap: wrap;
-          gap: 0.8rem;
-          min-height: 52px;
-          padding-bottom: 0.8rem;
+          gap: 0.5rem;
+          min-height: 40px;
+          padding-bottom: 0.5rem;
           align-items: flex-end;
         }
 
         .fm-glass-rack {
-          height: 9px;
+          height: 5px;
           background: linear-gradient(180deg, #e3f2fd, #bbdefb);
-          border-radius: 5px;
-          border: 1px solid #90caf9;
-          box-shadow: 0 3px 6px rgba(0,0,0,0.05);
+          border-radius: 3px;
+          border: 1px solid #b3d7f5;
         }
 
         .fm-item-pill {
           background: var(--sunny-yellow);
-          border: 1px solid rgba(255, 183, 3, 0.5);
+          border: 1px solid #f5dc9a;
           color: var(--ink-dark);
-          border-radius: 12px;
-          padding: 0.5rem 0.85rem;
+          border-radius: 8px;
+          padding: 0.3rem 0.5rem;
           display: inline-flex;
           align-items: center;
-          gap: 0.6rem;
-          box-shadow: 0 3px 8px rgba(0,0,0,0.04);
-          transition: all 0.15s ease;
+          gap: 0.4rem;
+          font-size: 0.85rem;
         }
 
-        .fm-item-pill:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 6px 14px rgba(255, 183, 3, 0.25);
-        }
-
-        .fm-item-name {
-          font-weight: 700;
-          font-size: 0.95rem;
-          text-transform: capitalize;
-        }
+        .fm-item-name { font-weight: 700; text-transform: capitalize; }
 
         .fm-item-qty {
           font-family: 'Space Mono', monospace;
-          font-size: 0.84rem;
+          font-size: 0.72rem;
           background: var(--pure-white);
           color: #7a5000;
-          padding: 0.18rem 0.5rem;
-          border-radius: 6px;
+          padding: 0.1rem 0.35rem;
+          border-radius: 4px;
           font-weight: 700;
         }
+
+        .fm-item-pill.priority { background: var(--citrus-orange); border-color: var(--citrus-orange); color: var(--pure-white); }
+
+        .fm-priority-btn {
+          background: none;
+          border: none;
+          padding: 0;
+          font-size: 1rem;
+          line-height: 1;
+          cursor: pointer;
+          color: inherit;
+        }
+
+        .fm-priority-tag { color: var(--citrus-orange); font-weight: 800; }
 
         .fm-qty-btn {
           background: var(--pure-white);
           border: 1px solid rgba(0,0,0,0.1);
           color: var(--ink-dark);
-          width: 24px;
-          height: 24px;
-          border-radius: 6px;
-          font-size: 1rem;
+          width: 20px;
+          height: 20px;
+          border-radius: 4px;
+          font-size: 0.85rem;
           font-weight: 700;
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
           line-height: 1;
+          padding: 0;
         }
-
-        .fm-qty-btn:hover {
-          background: var(--citrus-orange);
-          color: var(--pure-white);
-          border-color: var(--citrus-orange);
-        }
+        .fm-qty-btn:hover { background: var(--citrus-orange); color: var(--pure-white); border-color: var(--citrus-orange); }
 
         .fm-item-delete {
           background: transparent;
           border: none;
           color: var(--coral-red);
-          font-size: 1.2rem;
-          font-weight: 800;
-          cursor: pointer;
-          margin-left: 0.2rem;
-          line-height: 1;
-        }
-
-        /* FORMULAIRE CLAIR ET VIF */
-        .fm-bright-form {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 1rem;
-          margin-bottom: 2rem;
-          background: #f4ede2;
-          padding: 1.4rem;
-          border-radius: 16px;
-          border: 1px solid rgba(0,0,0,0.05);
-        }
-
-        .fm-form-input {
-          background: var(--pure-white);
-          color: var(--ink-dark);
-          border: 2px solid transparent;
-          border-radius: 10px;
-          padding: 0.85rem 1.1rem;
-          font-family: 'Plus Jakarta Sans', sans-serif;
           font-size: 1rem;
-          font-weight: 600;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.02);
-        }
-
-        .fm-form-input:focus {
-          outline: none;
-          border-color: var(--citrus-orange);
-        }
-
-        .fm-submit-btn {
-          background: var(--citrus-orange);
-          color: var(--pure-white);
-          border: none;
-          border-radius: 10px;
-          padding: 0.85rem 1.8rem;
-          font-family: 'Plus Jakarta Sans', sans-serif;
           font-weight: 800;
-          font-size: 1.05rem;
           cursor: pointer;
-          transition: all 0.15s ease;
-          box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+          line-height: 1;
+          padding: 0 0.1rem;
+        }
+        .fm-item-pill.priority .fm-item-delete { color: var(--pure-white); }
+
+        /* ---------- SUGGESTIONS, FAVORIS, HISTORIQUE ---------- */
+        .fm-suggestions-panel { border-color: #f6d88a; background: #fffcf3; }
+
+        .fm-fav-btn {
+          background: none;
+          border: none;
+          padding: 0;
+          font-size: 1.1rem;
+          line-height: 1;
+          cursor: pointer;
+          color: var(--ink-faint);
+          flex-shrink: 0;
+        }
+        .fm-fav-btn:hover { color: var(--coral-red); }
+        .fm-fav-btn.active { color: var(--coral-red); }
+
+        .fm-history-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+        .fm-history-week { border: 1px solid var(--line-color); border-radius: 10px; padding: 0.8rem 1rem; }
+
+        .fm-history-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.6rem;
+          margin-bottom: 0.4rem;
+          font-size: 0.92rem;
         }
 
-        .fm-submit-btn:hover {
-          background: var(--citrus-orange-hover);
-          transform: translateY(-1px);
+        .fm-history-recipes { list-style: none; margin: 0; padding: 0; }
+        .fm-history-recipes li {
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
+          padding: 0.4rem 0;
+          border-top: 1px solid #f1eee9;
+          font-weight: 600;
+          font-size: 0.88rem;
         }
 
-        /* GRILLE DE RECETTES */
+        /* ---------- CARTES RECETTES ---------- */
         .fm-recipes-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-          gap: 1.4rem;
+          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          gap: 0.75rem;
           width: 100%;
         }
 
         .fm-recipe-box {
           background: var(--pure-white);
           border: 1px solid var(--line-color);
-          border-radius: 16px;
+          border-radius: 10px;
           overflow: hidden;
-          box-shadow: 0 6px 18px rgba(0,0,0,0.03);
-          transition: all 0.2s ease;
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
+        .fm-recipe-box:hover { border-color: #f3b79d; box-shadow: 0 4px 14px rgba(28, 37, 32, 0.06); }
+        .fm-recipe-box.selected { border-color: var(--fresh-green); box-shadow: 0 0 0 1px var(--fresh-green); }
 
-        .fm-recipe-box:hover {
-          transform: translateY(-3px);
-          box-shadow: 0 12px 28px rgba(0,0,0,0.07);
-          border-color: rgba(255, 107, 53, 0.4);
-        }
+        .fm-box-header { padding: 0.85rem 0.95rem; cursor: pointer; }
 
-        .fm-box-header {
-          padding: 1.4rem;
-          cursor: pointer;
-        }
-
-        .fm-box-title {
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 1.25rem;
-          font-weight: 800;
-          color: var(--ink-dark);
-          margin-bottom: 0.4rem;
-          line-height: 1.35;
-        }
+        .fm-box-title { font-size: 0.95rem; font-weight: 800; color: var(--ink-dark); margin-bottom: 0.35rem; line-height: 1.3; }
 
         .fm-box-meta {
-          font-size: 0.9rem;
+          font-size: 0.76rem;
           color: var(--ink-soft);
           display: flex;
           align-items: center;
-          gap: 0.6rem;
+          gap: 0.3rem 0.5rem;
           flex-wrap: wrap;
         }
 
         .fm-pill-device {
-          background: #edf2ee;
+          background: #eef3ef;
           color: var(--fresh-green);
           font-weight: 700;
-          padding: 0.2rem 0.55rem;
-          border-radius: 6px;
-          font-size: 0.8rem;
+          padding: 0.05rem 0.4rem;
+          border-radius: 4px;
+          font-size: 0.72rem;
         }
 
-        .fm-box-drawer {
-          background: #fcfbfa;
-          border-top: 1px dashed var(--line-color);
-          padding: 1.4rem;
+        .fm-card-foot {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 0.5rem;
+          margin-top: 0.7rem;
         }
 
-        .fm-label-sub {
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 1rem;
-          font-weight: 800;
-          color: var(--citrus-orange);
-          margin: 1.2rem 0 0.5rem;
-        }
+        .fm-card-price { font-weight: 800; font-size: 0.95rem; }
+        .fm-card-toggle { display: block; margin-top: 0.45rem; font-size: 0.75rem; color: var(--ink-faint); font-weight: 700; }
 
+        .fm-box-drawer { background: #fbfaf8; border-top: 1px solid var(--line-color); padding: 0.9rem 0.95rem; }
+
+        .fm-label-sub { font-size: 0.8rem; font-weight: 800; color: var(--citrus-orange); margin: 0.9rem 0 0.4rem; text-transform: uppercase; letter-spacing: 0.03em; }
         .fm-label-sub:first-child { margin-top: 0; }
 
-        .fm-ings-container {
-          display: flex;
-          flex-direction: column;
-          gap: 0.45rem;
-          margin-bottom: 1.2rem;
-        }
+        .fm-ings-container { display: flex; flex-direction: column; gap: 0.25rem; }
 
         .fm-ing-line {
           display: flex;
           justify-content: space-between;
-          padding: 0.4rem 0.6rem;
+          gap: 0.5rem;
+          padding: 0.3rem 0.5rem;
           border-radius: 6px;
           background: var(--pure-white);
-          font-size: 0.92rem;
-          border: 1px solid rgba(0,0,0,0.04);
+          font-size: 0.8rem;
+          border: 1px solid #f1eee9;
         }
 
-        .fm-recipe-ol {
-          margin: 0 0 1.2rem;
-          padding-left: 1.3rem;
-          line-height: 1.6;
-          color: var(--ink-dark);
-          font-size: 0.95rem;
-        }
+        .fm-recipe-ol { margin: 0; padding-left: 1.1rem; line-height: 1.5; font-size: 0.84rem; }
+        .fm-recipe-ol li { margin-bottom: 0.3rem; }
 
-        .fm-recipe-ol li { margin-bottom: 0.5rem; }
-
-        /* TICKET DE CAISSE */
+        /* ---------- TICKET DE CAISSE ---------- */
         .fm-grocery-ticket {
           background: var(--pure-white);
-          border: 2px dashed rgba(46, 125, 71, 0.3);
-          border-radius: 16px;
-          padding: 2.2rem;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.03);
-          max-width: 900px;
-          margin: 0 auto;
+          border: 1px dashed #b9d6c2;
+          border-radius: 10px;
+          padding: 1rem 1.1rem;
+          font-size: 0.86rem;
         }
 
         .fm-ticket-row {
           display: flex;
           justify-content: space-between;
           align-items: baseline;
-          padding: 0.85rem 0;
-          border-bottom: 1px dashed rgba(0,0,0,0.08);
+          gap: 0.8rem;
+          padding: 0.5rem 0;
+          border-bottom: 1px dashed #ebe7e0;
         }
 
         .fm-ticket-total {
           display: flex;
           justify-content: space-between;
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          font-size: 1.5rem;
+          font-size: 1.1rem;
           font-weight: 800;
-          margin-top: 1.5rem;
-          padding-top: 1.2rem;
-          border-top: 3px solid var(--ink-dark);
+          margin-top: 0.8rem;
+          padding-top: 0.7rem;
+          border-top: 2px solid var(--ink-dark);
         }
-      `}</style>
 
-      <div className="fm-fullwidth-wrapper">
-        {/* HEADER CENTRÉ AVEC LE TITRE EN SYNE */}
-        <header className="fm-hero-header">
-          <h1 className="fm-hero-title">
-            <span>🥕</span> Frigo malin <span>🍳</span>
-          </h1>
-          <p className="fm-hero-tagline">
-            Moins de gaspillage, de vrais bons repas cuisinés et un budget courses respecté à l'euro près.
-          </p>
+        /* ---------- RESPONSIVE ---------- */
+        @media (max-width: 980px) {
+          .fm-layout-sidebar, .fm-layout-split, .fm-layout-fridge { grid-template-columns: minmax(0, 1fr); }
+          .fm-sidebar, .fm-layout-split > .fm-card-panel:last-child { position: static; }
+          .fm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
 
-          <div className="fm-hero-badges">
-            <span className="fm-hero-pill">
-              Budget max : <strong>{weeklyBudget} €</strong>
-            </span>
-            <span style={{ color: "rgba(255, 183, 3, 0.6)" }}>•</span>
-            <span className="fm-hero-pill">
-              Plats sélectionnés : <strong>{selected.size} sur {mealsWanted}</strong>
-            </span>
-            <span style={{ color: "rgba(255, 183, 3, 0.6)" }}>•</span>
-            <span className="fm-hero-pill">
-              Convives : <strong>{servings} personnes</strong>
-            </span>
+        @media (max-width: 640px) {
+          .fm-topbar { position: static; }
+          .fm-account-hint { display: none; }
+          .fm-logo { font-size: 1.1rem; }
+          .fm-topbar-inner { height: auto; flex-wrap: wrap; padding: 0.6rem 1rem 0; gap: 0.5rem 1rem; }
+          .fm-topbar-account { margin-left: auto; }
+          .fm-nav { order: 3; flex-basis: 100%; height: 44px; }
+          .fm-account-user { max-width: 140px; }
+          .fm-container { padding: 1rem 1rem 3rem; }
+          .fm-card-panel { padding: 1rem; }
+          .fm-search { max-width: none; }
+          .fm-account-form, .fm-account-bar > .fm-account-message { width: min(300px, calc(100vw - 2rem)); }
+        }
+`}</style>
+
+      {/* BARRE DE NAVIGATION */}
+      <header className="fm-topbar">
+        <div className="fm-topbar-inner">
+          <p className="fm-logo">🥕 Frigo malin</p>
+          <nav className="fm-nav">
+            {[
+              { id: "frigo", label: "Mon frigo", count: fridgeList.length },
+              { id: "recettes", label: "Recettes", count: recipesWithStatus.length },
+              { id: "planning", label: "Planning & courses", count: selected.size },
+              { id: "bibliotheque", label: "Mes recettes", count: favorites.size },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`fm-nav-link ${activeTab === tab.id ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+                {tab.count > 0 && <span className="fm-badge-counter">{tab.count}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="fm-topbar-account">
+            <AccountBar session={session} syncStatus={syncStatus} />
           </div>
+        </div>
+      </header>
 
-          <AccountBar session={session} syncStatus={syncStatus} />
-        </header>
-
-        {/* ONGLETS CENTRÉS */}
-        <nav className="fm-tabs-bar">
-          <button
-            className={`fm-tab-button ${activeTab === "frigo" ? "active" : ""}`}
-            onClick={() => setActiveTab("frigo")}
-          >
-            ❄️ Mon réfrigérateur
-          </button>
-          <button
-            className={`fm-tab-button ${activeTab === "recettes" ? "active" : ""}`}
-            onClick={() => setActiveTab("recettes")}
-          >
-            🍲 Les plats cuisinés ({recipesWithStatus.length})
-          </button>
-          <button
-            className={`fm-tab-button ${activeTab === "planning" ? "active" : ""}`}
-            onClick={() => setActiveTab("planning")}
-          >
-            📋 Mon planning & Courses
-            {selected.size > 0 && <span className="fm-badge-counter">{selected.size}</span>}
-          </button>
-        </nav>
+      <main className="fm-container">
+        {/* CHIFFRES CLÉS DE LA SEMAINE */}
+        <div className="fm-stats">
+          <div className="fm-stat">
+            <div className="fm-stat-label">Plats choisis</div>
+            <div className="fm-stat-value">
+              {selected.size} / {mealsWanted}
+            </div>
+          </div>
+          <div className="fm-stat">
+            <div className="fm-stat-label">Courses estimées</div>
+            <div className={`fm-stat-value ${totalStoreBill <= weeklyBudget ? "ok" : "over"}`}>
+              {fmtPrice(totalStoreBill)}
+            </div>
+          </div>
+          <div className="fm-stat">
+            <div className="fm-stat-label">Budget max</div>
+            <div className="fm-stat-value">{fmtPrice(weeklyBudget)}</div>
+          </div>
+          <div className="fm-stat">
+            <div className="fm-stat-label">Convives</div>
+            <div className="fm-stat-value">
+              {servings} pers. · {store.name.split(" ")[0]}
+            </div>
+          </div>
+        </div>
 
         {/* ================= ONGLET 1 : MON RÉFRIGÉRATEUR ================= */}
         {activeTab === "frigo" && (
-          <section className="fm-card-panel">
-            <h2>Mon réfrigérateur rétro</h2>
+          <div className="fm-layout-fridge">
+          <aside className="fm-card-panel">
+            <h2>Ajouter un aliment</h2>
             <p className="fm-subhint">
-              Ajoute tes ingrédients : ils sont rangés sur les étagères et sauvegardés définitivement sur ton ordinateur.
+              Il est rangé sur les étagères et enregistré automatiquement. L'étoile ☆ d'un aliment le rend
+              prioritaire : les recettes qui l'utilisent passent devant.
             </p>
 
             <form className="fm-bright-form" onSubmit={handleAddCustom}>
               <input
                 type="text"
                 className="fm-form-input"
-                style={{ flex: "2", minWidth: "220px" }}
-                placeholder="Nom (ex : poulet, patates, oeufs, riz, courgettes...)"
+                placeholder="Ex : poulet, patates, courgettes…"
+                aria-label="Nom de l'aliment"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
               />
-              <input
-                type="number"
-                className="fm-form-input"
-                style={{ width: "110px" }}
-                min="1"
-                value={customQty}
-                onChange={(e) => setCustomQty(Math.max(1, Number(e.target.value)))}
-              />
-              <select
-                className="fm-form-input"
-                value={customUnit}
-                onChange={(e) => setCustomUnit(e.target.value)}
-              >
-                <option value="g">grammes (g)</option>
-                <option value="pce">pièces (pce)</option>
-                <option value="ml">millilitres (ml)</option>
-                <option value="tranche">tranches</option>
-                <option value="boite">boîtes</option>
-              </select>
+              <div className="fm-form-row">
+                <input
+                  type="number"
+                  className="fm-form-input"
+                  style={{ width: "90px", flexShrink: 0 }}
+                  min="1"
+                  aria-label="Quantité"
+                  value={customQty}
+                  onChange={(e) => setCustomQty(Math.max(1, Number(e.target.value)))}
+                />
+                <select
+                  className="fm-form-input"
+                  aria-label="Unité"
+                  value={customUnit}
+                  onChange={(e) => setCustomUnit(e.target.value)}
+                >
+                  <option value="g">grammes (g)</option>
+                  <option value="pce">pièces (pce)</option>
+                  <option value="ml">millilitres (ml)</option>
+                  <option value="tranche">tranches</option>
+                  <option value="boite">boîtes</option>
+                </select>
+              </div>
               <button type="submit" className="fm-submit-btn">
                 + Ranger au frigo
               </button>
             </form>
+          </aside>
 
+          <section className="fm-card-panel">
+            <h2>Mon réfrigérateur</h2>
+            <p className="fm-subhint">Ajuste les quantités avec − et +, ou retire un aliment avec ×.</p>
             <div className="fm-fridge-container">
               <div className="fm-vintage-handle" />
 
@@ -1338,21 +1686,26 @@ export default function FridgeApp() {
 
               <div className="fm-fridge-shelves-zone">
                 {fridgeList.length === 0 ? (
-                  <div style={{ padding: "4rem 1rem", textAlign: "center", color: "var(--ink-soft)" }}>
-                    <div style={{ fontSize: "3rem", marginBottom: "0.5rem" }}>🥬</div>
-                    <div style={{ fontWeight: 800, fontSize: "1.3rem", color: "var(--ink-dark)" }}>
-                      Ton réfrigérateur est tout propre et vide !
-                    </div>
-                    <div style={{ fontSize: "1rem", marginTop: "0.4rem" }}>
-                      Ajoute les aliments de tes placards ci-dessus pour composer tes menus.
-                    </div>
+                  <div className="fm-empty">
+                    <div style={{ fontSize: "2rem", marginBottom: "0.3rem" }}>🥬</div>
+                    <strong style={{ color: "var(--ink-dark)" }}>Ton réfrigérateur est vide.</strong>
+                    <div style={{ marginTop: "0.2rem" }}>Ajoute tes aliments avec le formulaire pour composer tes menus.</div>
                   </div>
                 ) : (
                   shelves.map((shelfItems, sIdx) => (
                     <div className="fm-shelf-block" key={sIdx}>
                       <div className="fm-shelf-items-row">
                         {shelfItems.map(([key, item]) => (
-                          <div className="fm-item-pill" key={key}>
+                          <div className={`fm-item-pill ${item.priority ? "priority" : ""}`} key={key}>
+                            <button
+                              type="button"
+                              className="fm-priority-btn"
+                              onClick={() => togglePriority(key)}
+                              title={item.priority ? "Ne plus utiliser en priorité" : "À utiliser en priorité dans les recettes"}
+                              aria-pressed={!!item.priority}
+                            >
+                              {item.priority ? "★" : "☆"}
+                            </button>
                             <span className="fm-item-name">{item.name}</span>
                             <span className="fm-item-qty">{item.qty} {item.unit}</span>
                             <button
@@ -1389,148 +1742,38 @@ export default function FridgeApp() {
               </div>
             </div>
           </section>
+          </div>
         )}
 
         {/* ================= ONGLET 2 : LES RECETTES ================= */}
         {activeTab === "recettes" && (
-          <>
-            <section className="fm-card-panel">
-              <h2>Mes appareils & Préférences de la semaine</h2>
-              <p className="fm-subhint">
-                Ajuste tes équipements et ton budget : l'optimisation s'adapte immédiatement.
-              </p>
+          <div className="fm-layout-sidebar">
+            <aside className="fm-card-panel fm-sidebar">
+              <h2>Ma semaine</h2>
+              <p className="fm-subhint">Les suggestions s'adaptent tout de suite.</p>
 
-              {/* Équipements */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", marginBottom: "2rem" }}>
-                {AVAILABLE_EQUIPMENTS.map((eq) => {
-                  const active = !!equipments[eq.id];
-                  return (
-                    <button
-                      key={eq.id}
-                      type="button"
-                      style={{
-                        background: active ? "var(--fresh-green-light)" : "var(--pure-white)",
-                        color: active ? "var(--fresh-green)" : "var(--ink-soft)",
-                        border: active ? "2px solid var(--fresh-green)" : "1px solid var(--line-color)",
-                        borderRadius: "999px",
-                        padding: "0.6rem 1.4rem",
-                        fontFamily: "inherit",
-                        fontWeight: 700,
-                        fontSize: "0.95rem",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem",
-                        transition: "all 0.15s ease"
-                      }}
-                      onClick={() => setEquipments((prev) => ({ ...prev, [eq.id]: !prev[eq.id] }))}
-                    >
-                      <span>{eq.icon}</span>
-                      <span>{eq.label}</span>
-                      <span>{active ? "✓" : "+"}</span>
-                    </button>
-                  );
-                })}
+              <div className="fm-field-row">
+                <div className="fm-field">
+                  <span className="fm-field-label">Repas voulus</span>
+                  <div className="fm-stepper">
+                    <button type="button" aria-label="Moins de repas" onClick={() => setMealsWanted((m) => Math.max(1, m - 1))}>−</button>
+                    <span className="fm-stepper-value">{mealsWanted}</span>
+                    <button type="button" aria-label="Plus de repas" onClick={() => setMealsWanted((m) => Math.min(14, m + 1))}>+</button>
+                  </div>
+                </div>
+                <div className="fm-field">
+                  <span className="fm-field-label">Convives</span>
+                  <div className="fm-stepper">
+                    <button type="button" aria-label="Moins de convives" onClick={() => setServings((s) => Math.max(1, s - 1))}>−</button>
+                    <span className="fm-stepper-value">{servings}</span>
+                    <button type="button" aria-label="Plus de convives" onClick={() => setServings((s) => Math.min(10, s + 1))}>+</button>
+                  </div>
+                </div>
               </div>
 
-              {/* Paramètres de budget */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "2.5rem", marginBottom: "2rem", alignItems: "flex-end" }}>
-                <div>
-                  <span style={{ display: "block", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--ink-soft)" }}>
-                    Convives par repas
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                    <button
-                      className="fm-submit-btn"
-                      style={{ padding: "0.4rem 0.9rem", background: "var(--fresh-green)" }}
-                      onClick={() => setServings((s) => Math.max(1, s - 1))}
-                    >
-                      −
-                    </button>
-                    <span style={{ fontSize: "1.3rem", fontWeight: 800, minWidth: "4.5rem", textAlign: "center", fontFamily: 'Space Mono', monospace: true }}>
-                      {servings} pers.
-                    </span>
-                    <button
-                      className="fm-submit-btn"
-                      style={{ padding: "0.4rem 0.9rem", background: "var(--fresh-green)" }}
-                      onClick={() => setServings((s) => Math.min(10, s + 1))}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <span style={{ display: "block", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--ink-soft)" }}>
-                    Enseigne habituelle
-                  </span>
-                  <select
-                    className="fm-form-input"
-                    value={storeId}
-                    onChange={(e) => setStoreId(e.target.value)}
-                  >
-                    {STORES.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <span style={{ display: "block", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--ink-soft)" }}>
-                    Budget max souhaité
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                    <button
-                      className="fm-submit-btn"
-                      style={{ padding: "0.4rem 0.9rem", background: "var(--citrus-orange)" }}
-                      onClick={() => setWeeklyBudget((b) => Math.max(10, b - 5))}
-                    >
-                      −
-                    </button>
-                    <span style={{ fontSize: "1.3rem", fontWeight: 800, minWidth: "4.5rem", textAlign: "center", fontFamily: 'Space Mono', monospace: true }}>
-                      {weeklyBudget} €
-                    </span>
-                    <button
-                      className="fm-submit-btn"
-                      style={{ padding: "0.4rem 0.9rem", background: "var(--citrus-orange)" }}
-                      onClick={() => setWeeklyBudget((b) => b + 5)}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <span style={{ display: "block", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--ink-soft)" }}>
-                    Repas voulus
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                    <button
-                      className="fm-submit-btn"
-                      style={{ padding: "0.4rem 0.9rem", background: "var(--citrus-orange)" }}
-                      onClick={() => setMealsWanted((m) => Math.max(1, m - 1))}
-                    >
-                      −
-                    </button>
-                    <span style={{ fontSize: "1.3rem", fontWeight: 800, minWidth: "3.5rem", textAlign: "center", fontFamily: 'Space Mono', monospace: true }}>
-                      {mealsWanted}
-                    </span>
-                    <button
-                      className="fm-submit-btn"
-                      style={{ padding: "0.4rem 0.9rem", background: "var(--citrus-orange)" }}
-                      onClick={() => setMealsWanted((m) => Math.min(14, m + 1))}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <span style={{ display: "block", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--ink-soft)" }}>
-                    Dont avec viande 🥩
-                  </span>
+              <div className="fm-field-row">
+                <div className="fm-field">
+                  <span className="fm-field-label">Dont viande 🥩</span>
                   <select
                     className="fm-form-input"
                     value={meatTarget === null ? "" : meatTarget}
@@ -1539,16 +1782,13 @@ export default function FridgeApp() {
                     <option value="">Peu importe</option>
                     {Array.from({ length: mealsWanted + 1 }, (_, n) => (
                       <option key={n} value={n}>
-                        {n === 0 ? "Aucun" : `${n} repas sur ${mealsWanted}`}
+                        {n === 0 ? "Aucun" : `${n} repas`}
                       </option>
                     ))}
                   </select>
                 </div>
-
-                <div>
-                  <span style={{ display: "block", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.4rem", color: "var(--ink-soft)" }}>
-                    Dont avec poisson 🐟
-                  </span>
+                <div className="fm-field">
+                  <span className="fm-field-label">Dont poisson 🐟</span>
                   <select
                     className="fm-form-input"
                     value={fishTarget === null ? "" : fishTarget}
@@ -1557,150 +1797,219 @@ export default function FridgeApp() {
                     <option value="">Peu importe</option>
                     {Array.from({ length: mealsWanted - (meatTarget ?? 0) + 1 }, (_, n) => (
                       <option key={n} value={n}>
-                        {n === 0 ? "Aucun" : `${n} repas sur ${mealsWanted}`}
+                        {n === 0 ? "Aucun" : `${n} repas`}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              {/* Bouton d'optimisation */}
-              <button
-                className="fm-submit-btn"
-                style={{ width: "100%", padding: "1.1rem", fontSize: "1.15rem", borderRadius: "14px" }}
-                onClick={optimizeMenu}
-              >
-                ⚡ Sélectionner automatiquement mes {mealsWanted} repas les plus économiques
-              </button>
+              <hr className="fm-divider" />
 
-              <div style={{ marginTop: "1.2rem", fontSize: "1.1rem", fontWeight: 700, textAlign: "center" }}>
-                {selected.size} repas choisis sur {mealsWanted} voulus (🥩 {selectedMeatCount}
-                {meatTarget !== null && `/${meatTarget}`} viande · 🐟 {selectedFishCount}
-                {fishTarget !== null && `/${fishTarget}`} poisson) · Vrai ticket de caisse :{" "}
-                <span style={{ color: totalStoreBill <= weeklyBudget ? "var(--fresh-green)" : "var(--coral-red)", fontFamily: 'Space Mono', monospace: true }}>
-                  {fmtPrice(totalStoreBill)}
-                </span>{" "}
-                / {fmtPrice(weeklyBudget)} de budget
+              <div className="fm-field-row">
+                <div className="fm-field">
+                  <span className="fm-field-label">Budget max</span>
+                  <div className="fm-stepper">
+                    <button type="button" aria-label="Baisser le budget" onClick={() => setWeeklyBudget((b) => Math.max(10, b - 5))}>−</button>
+                    <span className="fm-stepper-value">{weeklyBudget} €</span>
+                    <button type="button" aria-label="Augmenter le budget" onClick={() => setWeeklyBudget((b) => b + 5)}>+</button>
+                  </div>
+                </div>
+                <div className="fm-field">
+                  <span className="fm-field-label">Magasin</span>
+                  <select className="fm-form-input" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+                    {STORES.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </section>
+
+              <div className="fm-field">
+                <span className="fm-field-label">Mes appareils</span>
+                <div className="fm-chips">
+                  {AVAILABLE_EQUIPMENTS.map((eq) => (
+                    <button
+                      key={eq.id}
+                      type="button"
+                      className={`fm-chip ${equipments[eq.id] ? "active" : ""}`}
+                      aria-pressed={!!equipments[eq.id]}
+                      onClick={() => setEquipments((prev) => ({ ...prev, [eq.id]: !prev[eq.id] }))}
+                    >
+                      {eq.icon} {eq.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <hr className="fm-divider" />
+
+              <p className="fm-subhint" style={{ margin: 0 }}>
+                <strong>{selected.size}</strong> plat{selected.size > 1 ? "s" : ""} choisi{selected.size > 1 ? "s" : ""} sur {mealsWanted} · 🥩 {selectedMeatCount}
+                {meatTarget !== null && `/${meatTarget}`} · 🐟 {selectedFishCount}
+                {fishTarget !== null && `/${fishTarget}`}
+              </p>
+            </aside>
+
+            <div style={{ minWidth: 0 }}>
+            {suggestedRecipes.length > 0 && (
+              <section className="fm-card-panel fm-suggestions-panel">
+                <h2>✨ Suggestions pour ta semaine</h2>
+                <p className="fm-subhint">
+                  Les plats les plus adaptés à ton frigo (aliments ★ d'abord), à tes choix et à ton budget. Ajoute ceux qui te plaisent.
+                </p>
+                <div className="fm-recipes-grid">
+                  {suggestedRecipes.map((r) => renderRecipeCard(r, "suggestion"))}
+                </div>
+              </section>
+            )}
 
             <section className="fm-card-panel">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap", gap: "1rem" }}>
-                <h2 style={{ margin: 0 }}>Les plats cuisinés disponibles ({filteredRecipes.length})</h2>
+              <div className="fm-panel-head" style={{ marginBottom: "1rem" }}>
+                <h2>Tous les plats ({filteredRecipes.length})</h2>
                 <input
-                  type="text"
-                  placeholder="🔍 Filtrer (ex: poulet, lasagnes, curry...)"
-                  className="fm-form-input"
-                  style={{ minWidth: "280px" }}
+                  type="search"
+                  placeholder="🔍 Rechercher un plat ou un ingrédient"
+                  aria-label="Rechercher"
+                  className="fm-form-input fm-search"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
 
-              {/* GRILLE SUR TOUTE LA LARGEUR DE L'ÉCRAN */}
               <div className="fm-recipes-grid">
-                {filteredRecipes.map((r, idx) => {
-                  const isExpanded = expandedId === r.id;
-                  const isSelected = selected.has(r.id);
+                {filteredRecipes.map((r, idx) => renderRecipeCard(r, "all", idx + 1))}
+              </div>
+            </section>
+            </div>
+          </div>
+        )}
 
-                  return (
-                    <div className="fm-recipe-box" key={r.id}>
-                      <div className="fm-box-header" onClick={() => toggleAccordion(r.id)}>
-                        <div className="fm-box-title">{idx + 1}. {r.name}</div>
-                        <div className="fm-box-meta">
-                          <span>⏱ {r.time}</span>
-                          <span>{DIET_LABELS[r.diet]}</span>
-                          {r.equipments.map((eq) => (
-                            <span key={eq} className="fm-pill-device">
-                              {AVAILABLE_EQUIPMENTS.find((e) => e.id === eq)?.icon} {eq}
-                            </span>
-                          ))}
-                          <span>• {r.completedCount}/{r.totalCount} en stock</span>
-                        </div>
+        {/* ================= ONGLET 4 : MES RECETTES (FAVORIS + HISTORIQUE) ================= */}
+        {activeTab === "bibliotheque" && (
+          <>
+            <section className="fm-card-panel">
+              <h2>♥ Mes recettes gardées ({favorites.size})</h2>
+              <p className="fm-subhint">
+                Clique sur le cœur ♡ d'une recette pour la garder ici et la remettre facilement dans ta semaine.
+              </p>
+              {favorites.size === 0 ? (
+                <div className="fm-empty">
+                  Aucune recette gardée pour l'instant.
+                </div>
+              ) : (
+                <>
+                  <div className="fm-recipes-grid">
+                    {[...favorites]
+                      .map((id) => statusById.get(id))
+                      .filter(Boolean)
+                      .map((r) => renderRecipeCard(r, "favori"))}
+                  </div>
+                  {[...favorites].some((id) => !statusById.has(id)) && (
+                    <p className="fm-subhint" style={{ marginTop: "1rem" }}>
+                      Pas faisables avec tes appareils actuels :{" "}
+                      {[...favorites].filter((id) => !statusById.has(id)).map(recipeName).join(", ")}
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
 
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "1rem" }}>
-                          <div
-                            style={{
-                              fontWeight: 800,
-                              fontSize: "1.15rem",
-                              color: r.standAloneCost === 0 ? "var(--fresh-green)" : "var(--citrus-orange)",
-                              fontFamily: 'Space Mono',
-                              monospace: true
-                            }}
+            <section className="fm-card-panel">
+              <h2>🗓️ Historique de mes semaines ({history.length})</h2>
+              <p className="fm-subhint">
+                Chaque semaine terminée depuis « Mon planning » est enregistrée ici. Tu peux remettre un plat ou toute la semaine.
+              </p>
+              {history.length === 0 ? (
+                <div className="fm-empty">
+                  Pas encore de semaine enregistrée. Dans « Mon planning », clique sur « Terminer la semaine et l'enregistrer ».
+                </div>
+              ) : (
+                <div className="fm-history-list">
+                  {history.map((week, wIdx) => (
+                    <div className="fm-history-week" key={week.date}>
+                      <div className="fm-history-head">
+                        <strong>
+                          Semaine du{" "}
+                          {new Date(week.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                        </strong>
+                        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="fm-submit-btn small"
+                            onClick={() => addToMenu(week.ids.filter((id) => statusById.has(id)))}
                           >
-                            {r.standAloneCost === 0 ? "0 € à acheter" : `+${fmtPrice(r.standAloneCost)}`}
-                          </div>
-                          <span style={{ fontSize: "0.85rem", color: "var(--ink-soft)", fontWeight: 700 }}>
-                            {isExpanded ? "▲ Masquer" : "▼ Voir recette"}
-                          </span>
+                            ↺ Remettre toute la semaine
+                          </button>
+                          <button type="button" className="fm-account-link" onClick={() => removeWeek(wIdx)}>
+                            Supprimer
+                          </button>
                         </div>
                       </div>
-
-                      {/* TIROIR DÉROULANT */}
-                      {isExpanded && (
-                        <div className="fm-box-drawer">
-                          <div className="fm-label-sub">
-                            Ingrédients requis ({servings} pers.) :
-                          </div>
-                          <div className="fm-ings-container">
-                            {r.scaledIngredients.map((ing) => (
-                              <div className="fm-ing-line" key={ing.key}>
-                                <span>
-                                  <strong>{ing.name}</strong> : {ing.required} {ing.unit}
-                                </span>
-                                {ing.isFull ? (
-                                  <span style={{ color: "var(--fresh-green)", fontWeight: 800 }}>✓ Déjà au frigo</span>
-                                ) : (
-                                  <span style={{ color: "var(--coral-red)", fontWeight: 700 }}>
-                                    Manque {ing.deficit} {ing.unit} ({ing.packLabel})
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="fm-label-sub">Préparation pas-à-pas :</div>
-                          <ol className="fm-recipe-ol">
-                            {r.steps.map((st, sIdx) => (
-                              <li key={sIdx}>{st}</li>
-                            ))}
-                          </ol>
-
-                          <div style={{ textAlign: "right", marginTop: "1rem" }}>
-                            <button
-                              type="button"
-                              className="fm-submit-btn"
-                              style={{
-                                background: isSelected ? "var(--coral-red)" : "var(--fresh-green)",
-                                padding: "0.6rem 1.4rem"
-                              }}
-                              onClick={() => toggleSelect(r.id)}
-                            >
-                              {isSelected ? "Retirer du menu" : "+ Ajouter à mon menu"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                      <ul className="fm-history-recipes">
+                        {week.ids.map((id) => {
+                          const available = statusById.has(id);
+                          const inMenu = selected.has(id);
+                          return (
+                            <li key={id}>
+                              <button
+                                type="button"
+                                className={`fm-fav-btn ${favorites.has(id) ? "active" : ""}`}
+                                title={favorites.has(id) ? "Retirer de mes recettes gardées" : "Garder cette recette"}
+                                onClick={() => toggleFavorite(id)}
+                              >
+                                {favorites.has(id) ? "♥" : "♡"}
+                              </button>
+                              <span style={{ flex: 1 }}>{recipeName(id)}</span>
+                              {!available ? (
+                                <span className="fm-subhint" style={{ margin: 0 }}>indisponible avec tes appareils</span>
+                              ) : inMenu ? (
+                                <span style={{ color: "var(--fresh-green)", fontWeight: 800 }}>✓ Dans le menu</span>
+                              ) : (
+                                <button type="button" className="fm-account-link" onClick={() => addToMenu([id])}>
+                                  + Remettre
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
             </section>
           </>
         )}
 
         {/* ================= ONGLET 3 : PLANNING & TICKET DE CAISSE ================= */}
         {activeTab === "planning" && (
-          <>
+          <div className="fm-layout-split">
             <section className="fm-card-panel">
-              <h2>Menu sélectionné ({selected.size} repas pour {servings} pers.)</h2>
+              <div className="fm-panel-head">
+                <h2>
+                  Mon menu · {selected.size} repas pour {servings} pers.
+                </h2>
+                {selected.size > 0 && (
+                  <button
+                    type="button"
+                    className="fm-submit-btn small"
+                    onClick={archiveWeek}
+                    title="Enregistre ces plats dans « Mes recettes » et vide le menu pour préparer la semaine suivante"
+                  >
+                    📦 Terminer la semaine
+                  </button>
+                )}
+              </div>
               <p className="fm-subhint">
-                Retrouve toutes tes fiches recettes ci-dessous pour cuisiner directement depuis ton planning.
+                Clique sur un plat pour voir la recette. Une fois la semaine finie, enregistre-la pour la retrouver dans « Mes recettes ».
               </p>
 
               {selectedRecipes.length === 0 ? (
-                <div style={{ padding: "3rem", textAlign: "center", color: "var(--ink-soft)", fontStyle: "italic" }}>
-                  Aucun plat sélectionné. Rends-toi dans l'onglet des recettes ou clique sur « Sélectionner automatiquement ».
+                <div className="fm-empty">
+                  Aucun plat choisi. Va dans « Recettes » (les suggestions sont en haut) ou reprends-en depuis « Mes recettes ».
                 </div>
               ) : (
                 <div className="fm-recipes-grid">
@@ -1713,30 +2022,22 @@ export default function FridgeApp() {
                           <div className="fm-box-title">{r.name}</div>
                           <div className="fm-box-meta">
                             <span>⏱ {r.time}</span>
-                          <span>{DIET_LABELS[r.diet]}</span>
-                            {r.equipments.map((eq) => (
-                              <span key={eq} className="fm-pill-device">
-                                {AVAILABLE_EQUIPMENTS.find((e) => e.id === eq)?.icon} {eq}
+                            <span>{DIET_LABELS[r.diet]}</span>
+                            {r.priorityKeys.length > 0 && (
+                              <span className="fm-priority-tag">
+                                ★ {r.priorityKeys.map((k) => fridge[k]?.name || k).join(", ")}
                               </span>
-                            ))}
-                            <span>• {r.missingCount === 0 ? "Stock complet" : `${r.missingCount} achat(s) requis`}</span>
+                            )}
+                            <span>• {r.missingCount === 0 ? "Stock complet" : `${r.missingCount} achat(s)`}</span>
                           </div>
 
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "1rem" }}>
-                            <span style={{ fontSize: "0.88rem", color: "var(--citrus-orange)", fontWeight: 800 }}>
+                          <div className="fm-card-foot">
+                            <span className="fm-card-toggle" style={{ margin: 0 }}>
                               {isExpandedInPlan ? "▲ Masquer la recette" : "▼ Cuisiner ce plat"}
                             </span>
                             <button
                               type="button"
-                              style={{
-                                background: "none",
-                                border: "none",
-                                color: "var(--coral-red)",
-                                cursor: "pointer",
-                                textDecoration: "underline",
-                                fontSize: "0.95rem",
-                                fontWeight: 800
-                              }}
+                              className="fm-submit-btn small outline"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleSelect(r.id);
@@ -1750,7 +2051,7 @@ export default function FridgeApp() {
                         {isExpandedInPlan && (
                           <div className="fm-box-drawer">
                             <div className="fm-label-sub">
-                              Proportions pour {servings} personne{servings > 1 ? "s" : ""} :
+                              Pour {servings} personne{servings > 1 ? "s" : ""}
                             </div>
                             <div className="fm-ings-container">
                               {r.scaledIngredients.map((ing) => (
@@ -1761,15 +2062,13 @@ export default function FridgeApp() {
                                   {ing.isFull ? (
                                     <span style={{ color: "var(--fresh-green)", fontWeight: 800 }}>✓ En stock</span>
                                   ) : (
-                                    <span style={{ color: "var(--coral-red)", fontWeight: 700 }}>
-                                      À acheter ({ing.packLabel})
-                                    </span>
+                                    <span style={{ color: "var(--coral-red)", fontWeight: 700 }}>À acheter</span>
                                   )}
                                 </div>
                               ))}
                             </div>
 
-                            <div className="fm-label-sub">Préparation pas-à-pas :</div>
+                            <div className="fm-label-sub">Préparation</div>
                             <ol className="fm-recipe-ol">
                               {r.steps.map((st, sIdx) => (
                                 <li key={sIdx}>{st}</li>
@@ -1785,50 +2084,52 @@ export default function FridgeApp() {
             </section>
 
             <section className="fm-card-panel">
-              <h2>Ticket de caisse réel ({store.name})</h2>
+              <h2>🧾 Liste de courses</h2>
               <p className="fm-subhint">
-                Liste précise des formats réels vendus en magasin nécessaires pour tes repas, sans compter ce qui est déjà chez toi.
+                {store.name} · formats vendus en magasin, sans ce que tu as déjà au frigo.
               </p>
 
               <div className="fm-grocery-ticket">
                 {shoppingList.length === 0 ? (
-                  <div style={{ textAlign: "center", fontStyle: "italic", color: "var(--fresh-green)", padding: "1.5rem", fontWeight: 800 }}>
+                  <div className="fm-empty" style={{ padding: "1rem", color: "var(--fresh-green)", fontWeight: 700 }}>
                     {selectedRecipes.length === 0
                       ? "Choisis des plats pour générer ta liste de courses."
-                      : "🎉 Tu as déjà tous les ingrédients nécessaires dans ton réfrigérateur !"}
+                      : "🎉 Tu as déjà tout ce qu'il faut dans ton frigo !"}
                   </div>
                 ) : (
                   <>
                     {shoppingList.map((item) => (
                       <div className="fm-ticket-row" key={item.key}>
                         <div>
-                          <strong style={{ fontSize: "1.1rem", color: "var(--ink-dark)" }}>
-                            {item.packsToBuy > 1 ? `${item.packsToBuy}x ` : ""}
+                          <strong>
+                            {item.packsToBuy > 1 ? `${item.packsToBuy} × ` : ""}
                             {item.name}
                           </strong>
-                          <div style={{ fontSize: "0.85rem", color: "var(--ink-soft)", marginTop: "0.2rem" }}>
-                            Format : {item.packLabel} · Requis : {item.demanded} {item.unit} (dont {item.inStock} {item.unit} au frigo)
-                            {item.leftover > 0 && ` · Reste après repas : ${item.leftover} ${item.unit}`}
+                          <div style={{ fontSize: "0.76rem", color: "var(--ink-soft)", marginTop: "0.1rem" }}>
+                            {item.packLabel} · besoin {item.demanded} {item.unit}
+                            {item.inStock > 0 && ` (dont ${item.inStock} au frigo)`}
+                            {item.leftover > 0 && ` · reste ${item.leftover} ${item.unit}`}
                           </div>
                         </div>
-                        <span style={{ fontWeight: 800, fontSize: "1.2rem", fontFamily: 'Space Mono', monospace: true, color: "var(--ink-dark)" }}>
-                          {fmtPrice(item.cost)}
-                        </span>
+                        <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{fmtPrice(item.cost)}</span>
                       </div>
                     ))}
                     <div className="fm-ticket-total">
-                      <span>Total réel à régler</span>
+                      <span>Total</span>
                       <span style={{ color: totalStoreBill <= weeklyBudget ? "var(--fresh-green)" : "var(--coral-red)" }}>
                         {fmtPrice(totalStoreBill)}
                       </span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--ink-soft)", marginTop: "0.3rem", textAlign: "right" }}>
+                      Budget : {fmtPrice(weeklyBudget)}
                     </div>
                   </>
                 )}
               </div>
             </section>
-          </>
+          </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
