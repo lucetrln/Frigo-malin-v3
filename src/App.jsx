@@ -270,6 +270,7 @@ export default function FridgeApp() {
   const [customRecipes, setCustomRecipes] = useState([]); // recettes créées par l'utilisateur
   const [editingRecipe, setEditingRecipe] = useState(null); // null, "new" ou la recette modifiée
   const [cooked, setCooked] = useState(new Set()); // plats du menu déjà cuisinés cette semaine
+  const [bought, setBought] = useState(new Set()); // articles de la liste de courses déjà dans le panier
   const [equipments, setEquipments] = useState(DEFAULT_EQUIPMENTS);
   const [activeTab, setActiveTab] = useState("frigo");
   const [expandedId, setExpandedId] = useState(null);
@@ -294,6 +295,7 @@ export default function FridgeApp() {
     if (p.history) setHistory(p.history);
     if (p.customRecipes) setCustomRecipes(p.customRecipes);
     if (p.cooked) setCooked(new Set(p.cooked));
+    if (p.bought) setBought(new Set(p.bought));
     if (p.equipments) setEquipments(p.equipments);
   };
 
@@ -343,10 +345,10 @@ export default function FridgeApp() {
     persist
       .set(
         MASTER_PREFS_KEY,
-        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes, cooked: [...cooked] })
+        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes, cooked: [...cooked], bought: [...bought] })
       )
       .catch(() => {});
-  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked, isReady]);
+  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked, bought, isReady]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -394,14 +396,14 @@ export default function FridgeApp() {
     const timer = setTimeout(() => {
       saveUserData(userId, {
         fridge,
-        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes, cooked: [...cooked] },
+        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes, cooked: [...cooked], bought: [...bought] },
         selected: [...selected],
       })
         .then(() => setSyncStatus("saved"))
         .catch(() => setSyncStatus("error"));
     }, 800);
     return () => clearTimeout(timer);
-  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked]);
+  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked, bought]);
 
   const handleAddCustom = (e) => {
     e?.preventDefault();
@@ -736,6 +738,7 @@ export default function FridgeApp() {
       [{ date: new Date().toISOString(), ids: [...selected], cooked: [...selected].filter((id) => cooked.has(id)) }, ...prev].slice(0, 30)
     );
     setCooked(new Set());
+    setBought(new Set());
     setSelected(new Set());
   };
 
@@ -760,6 +763,65 @@ export default function FridgeApp() {
 
   const removeWeek = (index) => {
     setHistory((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // ---------- Liste de courses : cocher et exporter ----------
+  const [shareMessage, setShareMessage] = useState(null);
+
+  const toggleBought = (key) => {
+    setBought((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const buildShoppingText = () => {
+    const lines = shoppingList
+      .filter((item) => !bought.has(item.key))
+      .map((item) => `☐ ${item.packsToBuy > 1 ? `${item.packsToBuy} × ` : ""}${item.name} (${item.packLabel}) – ${fmtPrice(item.cost)}`);
+    return [
+      `🛒 Liste de courses Frigo malin – ${store.name}`,
+      "",
+      ...lines,
+      "",
+      `Total estimé : ${fmtPrice(totalStoreBill)}`,
+      `Repas : ${selectedRecipes.map((r) => r.name).join(", ")}`,
+    ].join("\n");
+  };
+
+  const flashShareMessage = (text) => {
+    setShareMessage(text);
+    setTimeout(() => setShareMessage(null), 3000);
+  };
+
+  const copyShoppingList = async () => {
+    try {
+      await navigator.clipboard.writeText(buildShoppingText());
+      flashShareMessage("✓ Liste copiée : colle-la dans tes notes ou un message.");
+    } catch (e) {
+      flashShareMessage("Impossible de copier automatiquement sur cet appareil.");
+    }
+  };
+
+  const shareShoppingList = async () => {
+    const text = buildShoppingText();
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Liste de courses", text });
+      } catch (e) {
+        // partage annulé par l'utilisateur : rien à faire
+      }
+    } else {
+      copyShoppingList();
+    }
+  };
+
+  const emailShoppingList = () => {
+    const subject = encodeURIComponent("Ma liste de courses Frigo malin");
+    const body = encodeURIComponent(buildShoppingText());
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
   };
 
   const toggleCooked = (id) => {
@@ -1429,6 +1491,12 @@ export default function FridgeApp() {
         }
 
         .fm-priority-tag { color: var(--citrus-orange); font-weight: 800; }
+
+        /* LISTE DE COURSES : PARTAGE ET ARTICLES COCHÉS */
+        .fm-share-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
+        .fm-ticket-row { cursor: pointer; }
+        .fm-ticket-check { width: 18px; height: 18px; margin: 0.1rem 0 0; flex-shrink: 0; accent-color: var(--fresh-green); cursor: pointer; align-self: flex-start; }
+        .fm-ticket-row.bought strong, .fm-ticket-row.bought > span { text-decoration: line-through; color: var(--ink-faint); }
 
         /* PLATS CUISINÉS DANS LA SEMAINE */
         .fm-cooked-check { display: flex; padding-top: 0.1rem; cursor: pointer; }
@@ -2277,8 +2345,27 @@ export default function FridgeApp() {
             <section className="fm-card-panel">
               <h2>🧾 Liste de courses</h2>
               <p className="fm-subhint">
-                {store.name} · formats vendus en magasin, sans ce que tu as déjà au frigo.
+                {store.name} · formats vendus en magasin, sans ce que tu as déjà au frigo. Coche les articles une fois dans ton panier.
               </p>
+
+              {shoppingList.length > 0 && (
+                <div className="fm-share-bar">
+                  <button type="button" className="fm-submit-btn small" onClick={shareShoppingList}>
+                    📤 Partager
+                  </button>
+                  <button type="button" className="fm-submit-btn small green" onClick={copyShoppingList}>
+                    📋 Copier
+                  </button>
+                  <button type="button" className="fm-submit-btn small green" onClick={emailShoppingList}>
+                    ✉️ E-mail
+                  </button>
+                </div>
+              )}
+              {shareMessage && (
+                <p className="fm-account-message info" role="status" style={{ marginBottom: "0.6rem" }}>
+                  {shareMessage}
+                </p>
+              )}
 
               <div className="fm-grocery-ticket">
                 {shoppingList.length === 0 ? (
@@ -2290,8 +2377,14 @@ export default function FridgeApp() {
                 ) : (
                   <>
                     {shoppingList.map((item) => (
-                      <div className="fm-ticket-row" key={item.key}>
-                        <div>
+                      <label className={`fm-ticket-row ${bought.has(item.key) ? "bought" : ""}`} key={item.key}>
+                        <input
+                          type="checkbox"
+                          className="fm-ticket-check"
+                          checked={bought.has(item.key)}
+                          onChange={() => toggleBought(item.key)}
+                        />
+                        <div style={{ flex: 1 }}>
                           <strong>
                             {item.packsToBuy > 1 ? `${item.packsToBuy} × ` : ""}
                             {item.name}
@@ -2303,8 +2396,13 @@ export default function FridgeApp() {
                           </div>
                         </div>
                         <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{fmtPrice(item.cost)}</span>
-                      </div>
+                      </label>
                     ))}
+                    {shoppingList.some((item) => bought.has(item.key)) && (
+                      <div style={{ fontSize: "0.78rem", color: "var(--fresh-green)", marginTop: "0.5rem", fontWeight: 700 }}>
+                        🛒 {shoppingList.filter((item) => bought.has(item.key)).length}/{shoppingList.length} articles dans le panier
+                      </div>
+                    )}
                     <div className="fm-ticket-total">
                       <span>Total</span>
                       <span style={{ color: totalStoreBill <= weeklyBudget ? "var(--fresh-green)" : "var(--coral-red)" }}>
