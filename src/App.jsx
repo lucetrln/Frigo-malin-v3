@@ -269,6 +269,7 @@ export default function FridgeApp() {
   const [history, setHistory] = useState([]); // semaines passées : [{ date, ids }]
   const [customRecipes, setCustomRecipes] = useState([]); // recettes créées par l'utilisateur
   const [editingRecipe, setEditingRecipe] = useState(null); // null, "new" ou la recette modifiée
+  const [cooked, setCooked] = useState(new Set()); // plats du menu déjà cuisinés cette semaine
   const [equipments, setEquipments] = useState(DEFAULT_EQUIPMENTS);
   const [activeTab, setActiveTab] = useState("frigo");
   const [expandedId, setExpandedId] = useState(null);
@@ -292,6 +293,7 @@ export default function FridgeApp() {
     if (p.favorites) setFavorites(new Set(p.favorites));
     if (p.history) setHistory(p.history);
     if (p.customRecipes) setCustomRecipes(p.customRecipes);
+    if (p.cooked) setCooked(new Set(p.cooked));
     if (p.equipments) setEquipments(p.equipments);
   };
 
@@ -341,10 +343,10 @@ export default function FridgeApp() {
     persist
       .set(
         MASTER_PREFS_KEY,
-        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes })
+        JSON.stringify({ servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes, cooked: [...cooked] })
       )
       .catch(() => {});
-  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, isReady]);
+  }, [servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked, isReady]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -392,14 +394,14 @@ export default function FridgeApp() {
     const timer = setTimeout(() => {
       saveUserData(userId, {
         fridge,
-        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes },
+        prefs: { servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites: [...favorites], history, customRecipes, cooked: [...cooked] },
         selected: [...selected],
       })
         .then(() => setSyncStatus("saved"))
         .catch(() => setSyncStatus("error"));
     }, 800);
     return () => clearTimeout(timer);
-  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes]);
+  }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked]);
 
   const handleAddCustom = (e) => {
     e?.preventDefault();
@@ -730,7 +732,10 @@ export default function FridgeApp() {
 
   const archiveWeek = () => {
     if (selected.size === 0) return;
-    setHistory((prev) => [{ date: new Date().toISOString(), ids: [...selected] }, ...prev].slice(0, 30));
+    setHistory((prev) =>
+      [{ date: new Date().toISOString(), ids: [...selected], cooked: [...selected].filter((id) => cooked.has(id)) }, ...prev].slice(0, 30)
+    );
+    setCooked(new Set());
     setSelected(new Set());
   };
 
@@ -757,7 +762,24 @@ export default function FridgeApp() {
     setHistory((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const toggleCooked = (id) => {
+    setCooked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const toggleSelect = (id) => {
+    // Un plat retiré du menu n'est plus compté comme « fait »
+    if (selected.has(id)) {
+      setCooked((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1407,6 +1429,30 @@ export default function FridgeApp() {
         }
 
         .fm-priority-tag { color: var(--citrus-orange); font-weight: 800; }
+
+        /* PLATS CUISINÉS DANS LA SEMAINE */
+        .fm-cooked-check { display: flex; padding-top: 0.1rem; cursor: pointer; }
+        .fm-cooked-check input { width: 18px; height: 18px; margin: 0; accent-color: var(--fresh-green); cursor: pointer; }
+        .fm-recipe-box.cooked { background: #f6faf7; }
+        .fm-recipe-box.cooked .fm-box-title { text-decoration: line-through; color: var(--ink-faint); }
+        .fm-cooked-progress {
+          margin-left: 0.6rem;
+          font-size: 0.78rem;
+          font-weight: 800;
+          color: var(--fresh-green);
+          background: var(--fresh-green-light);
+          padding: 0.1rem 0.5rem;
+          border-radius: 999px;
+          vertical-align: middle;
+        }
+        .visually-hidden {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+        }
 
         .fm-custom-tag {
           background: #eef0fb;
@@ -2090,7 +2136,12 @@ export default function FridgeApp() {
                               >
                                 {favorites.has(id) ? "♥" : "♡"}
                               </button>
-                              <span style={{ flex: 1 }}>{recipeName(id)}</span>
+                              <span style={{ flex: 1 }}>
+                                {recipeName(id)}
+                                {week.cooked?.includes(id) && (
+                                  <span style={{ color: "var(--fresh-green)", fontSize: "0.78rem", marginLeft: "0.4rem" }}>✓ fait</span>
+                                )}
+                              </span>
                               {!available ? (
                                 <span className="fm-subhint" style={{ margin: 0 }}>indisponible avec tes appareils</span>
                               ) : inMenu ? (
@@ -2119,6 +2170,11 @@ export default function FridgeApp() {
               <div className="fm-panel-head">
                 <h2>
                   Mon menu · {selected.size} repas pour {servings} pers.
+                  {selected.size > 0 && (
+                    <span className="fm-cooked-progress">
+                      {selectedRecipes.filter((r) => cooked.has(r.id)).length}/{selectedRecipes.length} faits
+                    </span>
+                  )}
                 </h2>
                 {selected.size > 0 && (
                   <button
@@ -2143,11 +2199,18 @@ export default function FridgeApp() {
                 <div className="fm-recipes-grid">
                   {selectedRecipes.map((r) => {
                     const isExpandedInPlan = expandedPlanningId === r.id;
+                    const isCooked = cooked.has(r.id);
 
                     return (
-                      <div className="fm-recipe-box" key={r.id}>
+                      <div className={`fm-recipe-box ${isCooked ? "cooked" : ""}`} key={r.id}>
                         <div className="fm-box-header" onClick={() => togglePlanningAccordion(r.id)}>
-                          <div className="fm-box-title">{r.name}</div>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: "0.55rem" }}>
+                            <label className="fm-cooked-check" onClick={(e) => e.stopPropagation()} title="Cocher quand tu as cuisiné ce plat">
+                              <input type="checkbox" checked={isCooked} onChange={() => toggleCooked(r.id)} />
+                              <span className="visually-hidden">Fait</span>
+                            </label>
+                            <div className="fm-box-title">{r.name}</div>
+                          </div>
                           <div className="fm-box-meta">
                             <span>⏱ {r.time}</span>
                             <span>{DIET_LABELS[r.diet]}</span>
