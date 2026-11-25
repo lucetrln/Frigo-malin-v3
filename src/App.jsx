@@ -2348,6 +2348,7 @@ export default function FridgeApp() {
                   {selectedRecipes.map((r) => {
                     const isExpandedInPlan = expandedPlanningId === r.id;
                     const isCooked = cooked.has(r.id);
+                    const isFavorite = favorites.has(r.id);
 
                     return (
                       <div className={`fm-recipe-box ${isCooked ? "cooked" : ""}`} key={r.id}>
@@ -2357,7 +2358,19 @@ export default function FridgeApp() {
                               <input type="checkbox" checked={isCooked} onChange={() => toggleCooked(r.id)} />
                               <span className="visually-hidden">Fait</span>
                             </label>
-                            <div className="fm-box-title">{r.name}</div>
+                            <div className="fm-box-title" style={{ flex: 1 }}>{r.name}</div>
+                            <button
+                              type="button"
+                              className={`fm-fav-btn ${isFavorite ? "active" : ""}`}
+                              title={isFavorite ? "Retirer de mes recettes gardées" : "Garder cette recette"}
+                              aria-pressed={isFavorite}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleFavorite(r.id);
+                              }}
+                            >
+                              {isFavorite ? "♥" : "♡"}
+                            </button>
                           </div>
                           <div className="fm-box-meta">
                             <span>⏱ {r.time}</span>
@@ -2476,13 +2489,13 @@ export default function FridgeApp() {
                       </div>
                     )}
                     <div className="fm-ticket-total">
-                      <span>Budget estimé ({store.name})</span>
+                      <span>Budget estimé</span>
                       <span style={{ color: totalStoreBill <= weeklyBudget ? "var(--fresh-green)" : "var(--coral-red)" }}>
                         {fmtPrice(totalStoreBill)}
                       </span>
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--ink-soft)", marginTop: "0.3rem", textAlign: "right" }}>
-                      Budget : {fmtPrice(weeklyBudget)}
+                      {store.name} · budget max {fmtPrice(weeklyBudget)}
                     </div>
                   </>
                 )}
