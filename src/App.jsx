@@ -1103,7 +1103,11 @@ export default function FridgeApp() {
           letter-spacing: -0.02em;
           white-space: nowrap;
           margin: 0;
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
         }
+        .fm-logo img { display: block; flex-shrink: 0; }
 
         .fm-nav {
           display: flex;
@@ -1786,6 +1790,14 @@ export default function FridgeApp() {
         }
 
         /* ---------- RESPONSIVE ---------- */
+        /* Pas assez de place sur une ligne : les onglets passent sous le logo */
+        @media (max-width: 1200px) {
+          .fm-topbar-inner { height: auto; flex-wrap: wrap; padding-top: 0.5rem; gap: 0.25rem 1.5rem; }
+          .fm-topbar-account { margin-left: auto; }
+          .fm-nav { order: 3; flex: 0 0 100%; height: 42px; }
+          .fm-sidebar, .fm-layout-split > .fm-card-panel:last-child { top: 116px; }
+        }
+
         @media (max-width: 980px) {
           .fm-layout-sidebar, .fm-layout-split, .fm-layout-fridge { grid-template-columns: minmax(0, 1fr); }
           .fm-sidebar, .fm-layout-split > .fm-card-panel:last-child { position: static; }
@@ -1810,7 +1822,10 @@ export default function FridgeApp() {
       {/* BARRE DE NAVIGATION */}
       <header className="fm-topbar">
         <div className="fm-topbar-inner">
-          <p className="fm-logo">🥕 Frigo malin</p>
+          <p className="fm-logo">
+            <img src="/icon-192.png" alt="" width="40" height="40" />
+            Frigo malin
+          </p>
           <nav className="fm-nav">
             {[
               { id: "frigo", label: "Mon frigo", count: fridgeList.length },
