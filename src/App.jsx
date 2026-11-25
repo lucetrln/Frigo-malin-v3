@@ -17,6 +17,14 @@ const cleanStr = (s = "") =>
 
 const fmtPrice = (n) => `${n.toFixed(2).replace(".", ",")} €`;
 
+// Quantité lisible pour la liste de courses (« 150 g », « 2 gousses », « 3 »)
+const fmtQty = (qty, unit) => {
+  if (unit === "pce") return `${qty}`;
+  if (unit === "g" || unit === "ml") return `${qty} ${unit}`;
+  const label = unit === "boite" ? "boîte" : unit;
+  return `${qty} ${label}${qty > 1 ? "s" : ""}`;
+};
+
 const MASTER_STOCK_KEY = "frigo_malin_stock_v1";
 const MASTER_PREFS_KEY = "frigo_malin_prefs_v1";
 const MASTER_SELECTED_KEY = "frigo_malin_selected_v1";
@@ -270,7 +278,7 @@ export default function FridgeApp() {
   const [customRecipes, setCustomRecipes] = useState([]); // recettes créées par l'utilisateur
   const [editingRecipe, setEditingRecipe] = useState(null); // null, "new" ou la recette modifiée
   const [cooked, setCooked] = useState(new Set()); // plats du menu déjà cuisinés cette semaine
-  const [bought, setBought] = useState({}); // articles achetés et rangés au frigo : { clé: { qty, name, packLabel, packsToBuy, cost } }
+  const [bought, setBought] = useState({}); // articles achetés et rangés au frigo : { clé: { qty, name, unit, cost } }
   const [cookedUsage, setCookedUsage] = useState({}); // ingrédients retirés du frigo par plat cuisiné : { idPlat: { clé: qty } }
   const [equipments, setEquipments] = useState(DEFAULT_EQUIPMENTS);
   const [activeTab, setActiveTab] = useState("frigo");
@@ -567,12 +575,11 @@ export default function FridgeApp() {
   const selectedRecipes = recipesWithStatus.filter((r) => selected.has(r.id));
 
   // Panier mutualisé : plats du menu pas encore cuisinés, moins ce qui est au frigo.
-  // Les articles déjà achetés (cochés) sont affichés à part, depuis `bought`.
+  // Les articles achetés (cochés) sont au frigo, donc déjà déduits ; ils sont affichés à part depuis `bought`.
   const shoppingList = useMemo(() => {
     const totalDemands = {};
     selectedRecipes.filter((r) => !cooked.has(r.id)).forEach((r) => {
       r.scaledIngredients.forEach((ing) => {
-        if (bought[ing.key]) return;
         totalDemands[ing.key] = (totalDemands[ing.key] || 0) + ing.required;
       });
     });
@@ -593,27 +600,20 @@ export default function FridgeApp() {
         };
 
         const packsToBuy = Math.ceil(deficit / itemDef.packQty);
-        const totalBoughtQty = packsToBuy * itemDef.packQty;
-        const leftover = totalBoughtQty - deficit;
         const cost = packsToBuy * (itemDef.basePrice * store.multiplier);
 
         items.push({
           key,
           name: itemDef.name,
           unit: itemDef.unit,
-          demanded,
-          inStock,
           deficit,
-          packsToBuy,
-          packLabel: itemDef.packLabel,
-          leftover,
           cost,
         });
       }
     });
 
     return items.sort((a, b) => b.cost - a.cost);
-  }, [selectedRecipes, fridge, store.multiplier, cooked, bought]);
+  }, [selectedRecipes, fridge, store.multiplier, cooked]);
 
   const boughtList = Object.entries(bought).map(([key, item]) => ({ key, ...item }));
   const remainingBill = shoppingList.reduce((sum, item) => sum + item.cost, 0);
@@ -793,36 +793,40 @@ export default function FridgeApp() {
     });
   };
 
-  // Cocher un article : on l'achète et on le range au frigo. Décocher : on le retire.
-  const toggleBought = (item) => {
-    if (bought[item.key]) {
-      applyFridgeChanges({ [item.key]: -bought[item.key].qty });
-      setBought((prev) => {
-        const next = { ...prev };
-        delete next[item.key];
-        return next;
-      });
-    } else {
-      const packQty = GROCERY_CATALOG[item.key]?.packQty || 1;
-      const qty = item.packsToBuy * packQty;
-      applyFridgeChanges({ [item.key]: qty });
-      setBought((prev) => ({
-        ...prev,
-        [item.key]: { qty, name: item.name, unit: item.unit, packLabel: item.packLabel, packsToBuy: item.packsToBuy, cost: item.cost },
-      }));
-    }
+  // Cocher un article : la quantité nécessaire est rangée au frigo (cumulée si on en avait déjà acheté)
+  const buyItem = (item) => {
+    applyFridgeChanges({ [item.key]: item.deficit });
+    setBought((prev) => ({
+      ...prev,
+      [item.key]: {
+        qty: (prev[item.key]?.qty || 0) + item.deficit,
+        name: item.name,
+        unit: item.unit,
+        cost: (prev[item.key]?.cost || 0) + item.cost,
+      },
+    }));
+  };
+
+  // Décocher : on retire du frigo ce qui y avait été rangé
+  const unbuyItem = (item) => {
+    applyFridgeChanges({ [item.key]: -item.qty });
+    setBought((prev) => {
+      const next = { ...prev };
+      delete next[item.key];
+      return next;
+    });
   };
 
   const buildShoppingText = () => {
     const lines = shoppingList.map(
-      (item) => `☐ ${item.packsToBuy > 1 ? `${item.packsToBuy} × ` : ""}${item.name} (${item.packLabel}) – ${fmtPrice(item.cost)}`
+      (item) => `☐ ${item.name} : ${fmtQty(item.deficit, item.unit)}`
     );
     return [
       `🛒 Liste de courses Frigo malin – ${store.name}`,
       "",
       ...lines,
       "",
-      `Reste à acheter : ${fmtPrice(remainingBill)}`,
+      `Budget estimé : ${fmtPrice(remainingBill)}`,
       `Repas : ${selectedRecipes.map((r) => r.name).join(", ")}`,
     ].join("\n");
   };
@@ -2406,7 +2410,7 @@ export default function FridgeApp() {
             <section className="fm-card-panel">
               <h2>🧾 Liste de courses</h2>
               <p className="fm-subhint">
-                {store.name} · formats vendus en magasin, sans ce que tu as déjà au frigo. Coche un article acheté : il est rangé automatiquement dans ton frigo.
+                Quantités nécessaires à tes recettes, sans ce que tu as déjà au frigo. Coche un article acheté : il est rangé dans ton frigo.
               </p>
 
               {shoppingList.length > 0 && (
@@ -2438,45 +2442,17 @@ export default function FridgeApp() {
                 ) : (
                   <>
                     {shoppingList.map((item) => (
-                      <label className="fm-ticket-row" key={item.key}>
-                        <input
-                          type="checkbox"
-                          className="fm-ticket-check"
-                          checked={false}
-                          onChange={() => toggleBought(item)}
-                        />
-                        <div style={{ flex: 1 }}>
-                          <strong>
-                            {item.packsToBuy > 1 ? `${item.packsToBuy} × ` : ""}
-                            {item.name}
-                          </strong>
-                          <div style={{ fontSize: "0.76rem", color: "var(--ink-soft)", marginTop: "0.1rem" }}>
-                            {item.packLabel} · besoin {item.demanded} {item.unit}
-                            {item.inStock > 0 && ` (dont ${item.inStock} au frigo)`}
-                            {item.leftover > 0 && ` · reste ${item.leftover} ${item.unit}`}
-                          </div>
-                        </div>
-                        <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{fmtPrice(item.cost)}</span>
+                      <label className="fm-ticket-row" key={`todo-${item.key}`}>
+                        <input type="checkbox" className="fm-ticket-check" checked={false} onChange={() => buyItem(item)} />
+                        <span style={{ flex: 1 }}>{item.name}</span>
+                        <strong style={{ whiteSpace: "nowrap" }}>{fmtQty(item.deficit, item.unit)}</strong>
                       </label>
                     ))}
                     {boughtList.map((item) => (
-                      <label className="fm-ticket-row bought" key={item.key}>
-                        <input
-                          type="checkbox"
-                          className="fm-ticket-check"
-                          checked
-                          onChange={() => toggleBought(item)}
-                        />
-                        <div style={{ flex: 1 }}>
-                          <strong>
-                            {item.packsToBuy > 1 ? `${item.packsToBuy} × ` : ""}
-                            {item.name}
-                          </strong>
-                          <div style={{ fontSize: "0.76rem", color: "var(--fresh-green)", marginTop: "0.1rem" }}>
-                            ✓ Rangé au frigo (+{item.qty} {item.unit})
-                          </div>
-                        </div>
-                        <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{fmtPrice(item.cost)}</span>
+                      <label className="fm-ticket-row bought" key={`bought-${item.key}`}>
+                        <input type="checkbox" className="fm-ticket-check" checked onChange={() => unbuyItem(item)} />
+                        <span style={{ flex: 1 }}>{item.name}</span>
+                        <strong style={{ whiteSpace: "nowrap" }}>{fmtQty(item.qty, item.unit)}</strong>
                       </label>
                     ))}
                     {boughtList.length > 0 && (
@@ -2485,7 +2461,7 @@ export default function FridgeApp() {
                       </div>
                     )}
                     <div className="fm-ticket-total">
-                      <span>Total</span>
+                      <span>Budget estimé ({store.name})</span>
                       <span style={{ color: totalStoreBill <= weeklyBudget ? "var(--fresh-green)" : "var(--coral-red)" }}>
                         {fmtPrice(totalStoreBill)}
                       </span>
