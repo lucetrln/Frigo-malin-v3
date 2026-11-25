@@ -3,6 +3,8 @@ import { MASSIVE_RECIPES } from "./recipesData";
 import { supabase, loadUserData, saveUserData } from "./supabase";
 import AccountBar from "./AccountBar";
 import RecipeEditor from "./RecipeEditor";
+import FridgeTab from "./FridgeTab";
+import { toBaseQty } from "./units";
 
 const ALL_RECIPES_BY_ID = new Map(MASSIVE_RECIPES.map((r) => [r.id, r]));
 
@@ -176,24 +178,6 @@ const ALIASES = {
   yaourt: ["yaourt", "yaourts", "yogourt", "fromageblanc", "yaourtgrec"],
 };
 
-function resolveKey(input = "") {
-  const cleanInput = cleanStr(input);
-  if (!cleanInput) return null;
-  // Correspondance exacte d'abord, sinon l'alias le plus long (« patate douce » ne doit pas devenir « patate »)
-  let bestKey = null;
-  let bestLen = 0;
-  for (const [key, aliases] of Object.entries(ALIASES)) {
-    for (const a of aliases) {
-      if (cleanInput === a) return key;
-      if ((cleanInput.includes(a) || a.includes(cleanInput)) && a.length > bestLen) {
-        bestKey = key;
-        bestLen = a.length;
-      }
-    }
-  }
-  return bestKey ?? cleanInput;
-}
-
 // ---------- Catalogue magasin ----------
 const GROCERY_CATALOG = {
   pdt: { name: "Pommes de terre", unit: "g", packQty: 2500, packLabel: "Filet 2,5 kg", basePrice: 2.30, step: 250 },
@@ -262,9 +246,6 @@ export default function FridgeApp() {
   const [fridge, setFridge] = useState({});
   const [isReady, setIsReady] = useState(false);
   const [recipes, setRecipes] = useState(MASSIVE_RECIPES);
-  const [customName, setCustomName] = useState("");
-  const [customQty, setCustomQty] = useState(500);
-  const [customUnit, setCustomUnit] = useState("g");
 
   const [selected, setSelected] = useState(new Set());
   const [servings, setServings] = useState(4);
@@ -415,45 +396,17 @@ export default function FridgeApp() {
     return () => clearTimeout(timer);
   }, [userId, cloudUserId, fridge, selected, servings, storeId, weeklyBudget, mealsWanted, meatMeals, fishMeals, equipments, favorites, history, customRecipes, cooked, bought, cookedUsage]);
 
-  const handleAddCustom = (e) => {
-    e?.preventDefault();
-    const raw = customName.trim();
-    if (!raw) return;
-
-    const matchedKey = resolveKey(raw);
-    const catalogItem = GROCERY_CATALOG[matchedKey];
-
-    const resolvedName = catalogItem?.name || raw;
-    const resolvedUnit = catalogItem?.unit || customUnit;
-    const qtyNum = Math.max(1, Number(customQty) || 1);
-
-    setFridge((prev) => ({
-      ...prev,
-      [matchedKey]: {
-        ...prev[matchedKey],
-        name: resolvedName,
-        qty: (prev[matchedKey]?.qty || 0) + qtyNum,
-        unit: resolvedUnit,
-      },
-    }));
-
-    setCustomName("");
-    setCustomQty(500);
-  };
-
-  const updateQty = (key, delta) => {
+  const addToFridge = ({ key, name, unit, qty }) => {
     setFridge((prev) => {
       const cur = prev[key];
-      if (!cur) return prev;
-      const step = GROCERY_CATALOG[key]?.step || (cur.unit === "g" ? 100 : 1);
-      const nextQty = cur.qty + delta * step;
-      if (nextQty <= 0) {
-        const copy = { ...prev };
-        delete copy[key];
-        return copy;
-      }
-      return { ...prev, [key]: { ...cur, qty: nextQty } };
+      // Ancien stock enregistré dans une autre unité : on le convertit avant d'additionner
+      const owned = !cur ? 0 : cur.unit === unit ? cur.qty : toBaseQty(key, unit, cur.qty, cur.unit) ?? cur.qty;
+      return { ...prev, [key]: { ...cur, name, unit, qty: owned + qty } };
     });
+  };
+
+  const setStockQty = (key, qty) => {
+    setFridge((prev) => (prev[key] && qty > 0 ? { ...prev, [key]: { ...prev[key], qty } } : prev));
   };
 
   // Aliment « à utiliser en priorité » : les recettes qui l'utilisent passent devant
@@ -1021,11 +974,6 @@ export default function FridgeApp() {
   };
 
   const fridgeList = Object.entries(fridge);
-
-  const shelves = [[], [], []];
-  fridgeList.forEach((entry, idx) => {
-    shelves[idx % 3].push(entry);
-  });
 
   return (
     <div className="fm-app-root">
@@ -1648,6 +1596,79 @@ export default function FridgeApp() {
         }
         .fm-item-pill.priority .fm-item-delete { color: var(--pure-white); }
 
+        /* Recherche d'un aliment */
+        .fm-combo { position: relative; }
+        .fm-combo-list {
+          position: absolute;
+          z-index: 20;
+          top: calc(100% + 4px);
+          left: 0;
+          right: 0;
+          max-height: 290px;
+          overflow-y: auto;
+          margin: 0;
+          padding: 0.3rem;
+          list-style: none;
+          background: var(--pure-white);
+          border: 1px solid var(--line-color);
+          border-radius: 10px;
+          box-shadow: 0 12px 32px rgba(28, 37, 32, 0.14);
+        }
+        .fm-combo-list li {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 0.5rem;
+          padding: 0.5rem 0.6rem;
+          border-radius: 6px;
+          font-size: 0.88rem;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .fm-combo-list li:hover, .fm-combo-list li.active { background: var(--citrus-orange-light); }
+        .fm-combo-list small { color: var(--ink-faint); white-space: nowrap; }
+        .fm-food-chosen { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+        .fm-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Aliments rangés par rayon */
+        .fm-shelf-title { font-size: 0.78rem; font-weight: 800; color: var(--fridge-accent); margin-bottom: 0.4rem; }
+        .fm-stock-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+          gap: 0.5rem;
+          padding-bottom: 0.6rem;
+        }
+        .fm-stock-item {
+          background: var(--sunny-yellow);
+          border: 1px solid #f5dc9a;
+          border-radius: 8px;
+          padding: 0.45rem 0.55rem;
+          font-size: 0.85rem;
+        }
+        .fm-stock-item.priority { background: var(--citrus-orange-light); border-color: var(--citrus-orange); }
+        .fm-stock-item.priority .fm-priority-btn { color: var(--citrus-orange); }
+        .fm-stock-top { display: flex; align-items: flex-start; gap: 0.4rem; margin-bottom: 0.35rem; }
+        .fm-stock-top .fm-item-name { flex: 1; text-transform: none; line-height: 1.25; }
+        .fm-stock-qty { display: flex; align-items: center; gap: 0.35rem; }
+        .fm-stock-qty .fm-qty-btn { width: 28px; height: 28px; flex-shrink: 0; }
+        .fm-stock-qty .fm-qty-btn:disabled { opacity: 0.35; cursor: not-allowed; background: var(--pure-white); color: var(--ink-dark); border-color: rgba(0,0,0,0.1); }
+        .fm-stock-input {
+          font: inherit;
+          font-weight: 800;
+          text-align: right;
+          width: 0;
+          flex: 1;
+          min-width: 44px;
+          height: 28px;
+          padding: 0 0.35rem;
+          border: 1px solid #ecd9a5;
+          border-radius: 6px;
+          background: var(--pure-white);
+          color: var(--ink-dark);
+        }
+        .fm-stock-input:focus { outline: none; border-color: var(--citrus-orange); box-shadow: 0 0 0 3px var(--citrus-orange-light); }
+        .fm-stock-unit { font-size: 0.78rem; color: var(--ink-soft); min-width: 1.6rem; }
+
         /* ---------- SUGGESTIONS, FAVORIS, HISTORIQUE ---------- */
         .fm-suggestions-panel { border-color: #f6d88a; background: #fffcf3; }
 
@@ -1815,6 +1836,9 @@ export default function FridgeApp() {
           .fm-container { padding: 1rem 1rem 3rem; }
           .fm-card-panel { padding: 1rem; }
           .fm-search { max-width: none; }
+          .fm-form-input, .fm-stock-input { font-size: 16px; }
+          .fm-stock-qty .fm-qty-btn, .fm-stock-input { height: 36px; }
+          .fm-stock-qty .fm-qty-btn { width: 36px; }
           .fm-account-form, .fm-account-bar > .fm-account-message { width: min(300px, calc(100vw - 2rem)); }
         }
 `}</style>
@@ -1881,127 +1905,15 @@ export default function FridgeApp() {
 
         {/* ================= ONGLET 1 : MON RÉFRIGÉRATEUR ================= */}
         {activeTab === "frigo" && (
-          <div className="fm-layout-fridge">
-          <aside className="fm-card-panel">
-            <h2>Ajouter un aliment</h2>
-            <p className="fm-subhint">
-              Il est rangé sur les étagères et enregistré automatiquement. L'étoile ☆ d'un aliment le rend
-              prioritaire : les recettes qui l'utilisent passent devant.
-            </p>
-
-            <form className="fm-bright-form" onSubmit={handleAddCustom}>
-              <input
-                type="text"
-                className="fm-form-input"
-                placeholder="Ex : poulet, patates, courgettes…"
-                aria-label="Nom de l'aliment"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-              />
-              <div className="fm-form-row">
-                <input
-                  type="number"
-                  className="fm-form-input"
-                  style={{ width: "90px", flexShrink: 0 }}
-                  min="1"
-                  aria-label="Quantité"
-                  value={customQty}
-                  onChange={(e) => setCustomQty(Math.max(1, Number(e.target.value)))}
-                />
-                <select
-                  className="fm-form-input"
-                  aria-label="Unité"
-                  value={customUnit}
-                  onChange={(e) => setCustomUnit(e.target.value)}
-                >
-                  <option value="g">grammes (g)</option>
-                  <option value="pce">pièces (pce)</option>
-                  <option value="ml">millilitres (ml)</option>
-                  <option value="tranche">tranches</option>
-                  <option value="boite">boîtes</option>
-                </select>
-              </div>
-              <button type="submit" className="fm-submit-btn">
-                + Ranger au frigo
-              </button>
-            </form>
-          </aside>
-
-          <section className="fm-card-panel">
-            <h2>Mon réfrigérateur</h2>
-            <p className="fm-subhint">Ajuste les quantités avec − et +, ou retire un aliment avec ×.</p>
-            <div className="fm-fridge-container">
-              <div className="fm-vintage-handle" />
-
-              <div className="fm-fridge-tophead">
-                <span className="fm-fridge-logo">FRIGO MALIN · FRESH AIR</span>
-                <div className="fm-fridge-led-panel">
-                  <span className="fm-led-light" />
-                  <span className="fm-led-status">
-                    +4°C · {fridgeList.length} ALIMENT{fridgeList.length > 1 ? "S" : ""}
-                  </span>
-                </div>
-              </div>
-
-              <div className="fm-fridge-shelves-zone">
-                {fridgeList.length === 0 ? (
-                  <div className="fm-empty">
-                    <div style={{ fontSize: "2rem", marginBottom: "0.3rem" }}>🥬</div>
-                    <strong style={{ color: "var(--ink-dark)" }}>Ton réfrigérateur est vide.</strong>
-                    <div style={{ marginTop: "0.2rem" }}>Ajoute tes aliments avec le formulaire pour composer tes menus.</div>
-                  </div>
-                ) : (
-                  shelves.map((shelfItems, sIdx) => (
-                    <div className="fm-shelf-block" key={sIdx}>
-                      <div className="fm-shelf-items-row">
-                        {shelfItems.map(([key, item]) => (
-                          <div className={`fm-item-pill ${item.priority ? "priority" : ""}`} key={key}>
-                            <button
-                              type="button"
-                              className="fm-priority-btn"
-                              onClick={() => togglePriority(key)}
-                              title={item.priority ? "Ne plus utiliser en priorité" : "À utiliser en priorité dans les recettes"}
-                              aria-pressed={!!item.priority}
-                            >
-                              {item.priority ? "★" : "☆"}
-                            </button>
-                            <span className="fm-item-name">{item.name}</span>
-                            <span className="fm-item-qty">{item.qty} {item.unit}</span>
-                            <button
-                              type="button"
-                              className="fm-qty-btn"
-                              onClick={() => updateQty(key, -1)}
-                              title="Diminuer"
-                            >
-                              −
-                            </button>
-                            <button
-                              type="button"
-                              className="fm-qty-btn"
-                              onClick={() => updateQty(key, 1)}
-                              title="Augmenter"
-                            >
-                              +
-                            </button>
-                            <button
-                              type="button"
-                              className="fm-item-delete"
-                              onClick={() => removeStock(key)}
-                              title="Supprimer"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="fm-glass-rack" />
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-          </div>
+          <FridgeTab
+            fridge={fridge}
+            catalog={GROCERY_CATALOG}
+            aliases={ALIASES}
+            onAdd={addToFridge}
+            onSetQty={setStockQty}
+            onTogglePriority={togglePriority}
+            onRemove={removeStock}
+          />
         )}
 
         {/* ================= ONGLET 2 : LES RECETTES ================= */}
